@@ -1,0 +1,4 @@
+*.tmp
+.luarc.json
+tags
+doc/tags
