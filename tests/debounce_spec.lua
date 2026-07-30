@@ -1,6 +1,6 @@
 --- Tests for debounce_trailing and throttle_by_id (spec §5).
 
-local debounce = require("dft-signs.debounce")
+local debounce = require("difftsigns.debounce")
 
 describe("debounce_trailing", function()
   it("fires once after a burst, with the last args", function()

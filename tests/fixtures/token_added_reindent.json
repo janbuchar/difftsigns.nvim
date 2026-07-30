@@ -1,0 +1,1 @@
+{"aligned_lines":[[0,0],[1,1],[2,2],[3,3],[4,4]],"chunks":[[{"lhs":{"line_number":1,"changes":[]},"rhs":{"line_number":1,"changes":[{"start":25,"end":26,"content":",","highlight":"normal"},{"start":27,"end":32,"content":"gamma","highlight":"normal"}]}}]],"language":"TypeScript","path":"d2.ts","status":"changed"}

@@ -1,228 +1,207 @@
-# dft-signs
+# difftsigns.nvim
 
-A Neovim plugin that drives [difftastic](https://github.com/Wilfred/difftastic)
-to produce **structural** (syntax-aware) gutter signs — markers only on lines
-that difftastic considers genuinely changed, not lines that merely reflowed or
-got reindented.
+**Dims the formatting noise in your gitsigns gutter so the real changes stand out.**
 
-If you wanted line-based markers you'd use gitsigns and go home. This is for
-when you want to see *structural* change and nothing else.
+You reindent a block, run prettier, or wrap something in a conditional. gitsigns
+lights up twelve lines. Two of them actually changed.
 
-## Features
+difftsigns asks [difftastic](https://github.com/Wilfred/difftastic) which of those
+lines changed *structurally* and dims the rest — in the same column, with the same
+glyphs, using your existing `]c` navigation.
 
-- **Structural changed-line markers** (layer 1) — a sign only on buffer lines
-  difftastic reports as genuinely changed.
-- **Chunk-span markers** (layer 2) — a visually subdued sign spanning each
-  difftastic *chunk* (logical change region), including the context lines
-  inside it. Reads as "this whole region is one structural change."
-- **Live, debounced updates** with a deliberately large interval (1.5s default).
-- **Revision-agnostic core** — the same engine serves both "working buffer vs
-  git ref" and "blob@base vs blob@head" (octo.nvim review mode).
+```
+ gitsigns alone          with difftsigns
+ ──────────────          ───────────────
+ ▎ function run() {      ▎ function run() {
+ ▎   if (enabled) {      ▎   if (enabled) {     <- real: new structure
+ ▎     doThing();        ▏     doThing();       <- dimmed: only reindented
+ ▎     doOther();        ▏     doOther();       <- dimmed
+ ▎     return 1;         ▏     return 1;        <- dimmed
+ ▎   }                   ▎   }                  <- real: new structure
+ ▎ }                     ▎ }
+```
+
+It adds **no gutter column**, **no navigation bindings**, and **no new mental
+model**. It changes the colour of things you were already looking at.
 
 ## Requirements
 
-- Neovim 0.10+ (uses `vim.system`, `vim.uv`, decoration providers).
-- [difftastic](https://github.com/Wilfred/difftastic) (`difft`) on your `PATH`.
-  Validated against **0.69.0**. The JSON output format is explicitly unstable;
-  see below.
+- Neovim 0.11+
+- [gitsigns.nvim](https://github.com/lewis6991/gitsigns.nvim) — **required**, not
+  optional (see [How it works](#how-it-works))
+- [difftastic](https://github.com/Wilfred/difftastic) `0.69.0` on `PATH`
 
-## Install (lazy.nvim)
+## Install
 
 ```lua
+-- lazy.nvim
 {
-  "you/dft-signs",
-  config = function()
-    require("dft-signs").setup({})
-  end,
+  "difftsigns.nvim",
+  dependencies = { "lewis6991/gitsigns.nvim" },
+  opts = {},
 }
 ```
 
+That's it. No `signcolumn` gymnastics required — the column is gitsigns'.
+
 ## Configuration
 
+Defaults shown; all keys optional.
+
 ```lua
-require("dft-signs").setup({
-  difft_cmd      = "difft",            -- allow custom path / wrapper
-  debounce_ms    = 1500,               -- large by design (see §5 of the spec)
-  max_filesize   = 1024 * 1024,        -- match difft's byte-limit; skip beyond
-  compare_base   = "index",            -- 'index'|'HEAD'|'save'|<revision>
-  layers = {
-    changed = { enable = true, text = "▌", hl = "DftSignsChange" },
-    span    = { enable = true, text = "▏", hl = "DftSignsSpan"   },
-  },
-  language_overrides = {},              -- { ["*.foo"] = "javascript" }
-  difft_version_expected = "0.69.0",    -- pin; warn on mismatch
-  preview_context = 2,                  -- unchanged lines shown around each change in the preview
-  on_attach = function(bufnr) end,      -- for buffer-local keymaps
+require("difftsigns").setup({
+  difft_cmd      = "difft",       -- path to, or wrapper around, difftastic
+  debounce_ms    = 400,           -- measured, not guessed (see below)
+  max_filesize   = 1024 * 1024,   -- matches difft's own --byte-limit
+  noise_hl       = "DifftSignsNoise",  -- highlight for demoted cells
+  noise_text     = nil,           -- nil = mirror gitsigns' glyph; set a string to override
+  priority_offset = 1,            -- added to gitsigns' sign_priority to win the cell
+  preview_context = 2,
+  language_overrides = {},        -- { ["*.foo"] = "javascript" }
+  difft_version_expected = "0.69.0",
+  on_attach = function(bufnr) end,
 })
 ```
 
-### Example with keybinds
+`debounce_ms = 400` is derived from measurement, not taste: with difftastic
+0.69.0 a realistic single-token edit costs ~41 ms on a 1145-line TypeScript file
+and ~200–330 ms on a 6045-line one.
 
-`on_attach` fires once per buffer we attach to, exactly like gitsigns'. Use it
-for buffer-local mappings so the keys only exist where the plugin is active:
+### Highlight groups
+
+| Group | Default | Purpose |
+|---|---|---|
+| `DifftSignsNoise` | links `NonText` | demoted (formatting-only) gutter cells |
+| `DifftSignsAdded` | links `Added` | added tokens in the preview (green) |
+| `DifftSignsRemoved` | links `Removed` | removed tokens in the preview (red) |
+| `DifftSignsContext` | links `Comment` | reflow-only lines in the preview |
+
+These link `Added`/`Removed` rather than `DiffAdd`/`DiffDelete` on purpose: the
+latter are diff-*mode* groups and are background-only in most colourschemes
+(nightfox renders them as `#3c4548` and `#403843` — two indistinguishable dark
+greys), which is useless for telling an addition from a removal.
+
+The plugin's entire visual design is `DifftSignsNoise`. If dimming is too subtle
+or too strong in your colourscheme, that's the knob.
+
+## The preview
+
+`require("difftsigns").preview()` shows the change under the cursor in gitsigns'
+familiar shape — removed lines, then added lines — with two things gitsigns can't
+show: the **exact changed tokens** highlighted, and the reflow-only lines
+**dimmed**, plus a header quantifying the split.
+
+**Only the changed tokens are coloured, not the whole line** — green for added,
+red for removed. Once difftastic has told us precisely which tokens changed, a
+whole-line wash is worse than redundant: it competes with the token highlight for
+attention. Lines that were only reformatted stay dimmed, matching the gutter. A
+whole-line colour appears in exactly one case: a brand-new or deleted file, where
+difftastic supplies no token detail and the line is all we can honestly colour.
+
+It previews the whole **contiguous run** of hunks, not one hunk. gitsigns computes
+hunks at zero context and (with `diff_opts.linematch`) can split a single logical
+edit into several adjacent ones, so keying the preview to one hunk would show
+different content on different lines of one unbroken block of signs. The header
+discloses when hunks were merged, e.g. `add+change @@ -363,1 +363,6 @@ (2 hunks)`.
+
+Bind it *instead of* `gitsigns.preview_hunk`:
 
 ```lua
-require("dft-signs").setup({
-  on_attach = function(bufnr)
-    local function map(lhs, rhs, desc)
-      vim.keymap.set("n", lhs, rhs, { buffer = bufnr, desc = desc })
-    end
-
-    map("<leader>ds", "<Cmd>DftSigns toggle_spans<CR>",   "dft-signs: toggle chunk spans")
-    map("<leader>dc", "<Cmd>DftSigns toggle_changes<CR>", "dft-signs: toggle changed-line markers")
-          map("<leader>dp", "<Cmd>DftSigns preview_span<CR>",   "dft-signs: preview span under cursor")
-          map("<leader>dr", "<Cmd>DftSigns refresh<CR>",        "dft-signs: refresh now")
-
-    -- Compare against different bases without leaving the buffer.
-    map("<leader>dH", "<Cmd>DftSigns change_base HEAD<CR>",  "dft-signs: diff vs HEAD")
-    map("<leader>dI", "<Cmd>DftSigns change_base index<CR>", "dft-signs: diff vs index")
-  end,
-})
+vim.keymap.set("n", "<leader>hp", require("difftsigns").preview)
 ```
 
 ## Commands
 
 ```
-:DftSigns attach            attach to the current buffer
-:DftSigns detach            detach from the current buffer
-:DftSigns refresh           force an immediate update
-:DftSigns toggle_spans      toggle layer 2 (chunk spans)
-:DftSigns toggle_changes    toggle layer 1 (changed-line markers)
-:DftSigns preview_span      preview the structural change under the cursor
-:DftSigns change_base <rev> compare against an arbitrary revision
+:DifftSigns preview    -- hunk preview with structural detail
+:DifftSigns toggle     -- turn the overlay off to see plain gitsigns again
+:DifftSigns refresh    -- force a re-diff
+:DifftSigns status     -- report the noise/real split, or why there's no overlay
+:DifftSigns attach | detach
 ```
 
-## octo.nvim review mode
-
-The comparison core takes two arbitrary text arrays and knows nothing about git
-or buffers, so review mode is a thin adapter:
+Statusline component:
 
 ```lua
-require("dft-signs.octo").review(review_bufnr, base_text, head_text, {
-  lang = "typescript",       -- optional
-  filename = "src/foo.ts",   -- optional; used for difft language detection
-})
+require("difftsigns").status()   -- "difft: 3 noise / 2 real", or nil
 ```
 
-## Why not gitsigns / mini.diff?
+## How it works
 
-Both funnel everything through a **line-based** diff model. gitsigns' hunk type
-and staging (`create_patch`) assume unified-diff semantics; mini.diff's `source`
-contract is "text in, `vim.diff` out" and assumes one diff side *is* the
-attached buffer. Either way, difftastic's per-line structural verdict is
-destroyed — you'd be showing a line diff under a "structural" banner, which is a
-lie. A custom decoration provider is the only thing that can render structural
-markers and fit the revision-vs-revision review case. See `dft-signs` internal
-docs / the design spec for the full argument.
+difftsigns **borrows** all of its geometry:
 
-## Running alongside gitsigns
+| Thing | Source |
+|---|---|
+| Hunk boundaries | gitsigns |
+| Reference text (the "before") | gitsigns |
+| Base revision | gitsigns (follows its `change_base` automatically) |
+| Sign glyphs and priority | gitsigns |
+| Which lines *really* changed | difftastic |
 
-**Yes — this is designed to run in parallel with gitsigns, not replace it.** The
-two are additive:
+For every gutter cell gitsigns drew on a line difftastic considers formatting
+noise, difftsigns places its own sign in the *same cell* at a higher extmark
+priority, with gitsigns' glyph and a dim highlight. One column, one set of
+shapes, one navigation model.
 
-- dft-signs owns its own extmark namespaces (`dft_signs_change`,
-  `dft_signs_span`) and never touches gitsigns' state. gitsigns keeps its own
-  namespaces and its default `sign_priority = 6`. Neither plugin reads or clears
-  the other's marks. (Verified: gitsigns' signs remain untouched with dft-signs
-  attached to the same buffer.)
-- Think of it as two layers with different jobs: keep gitsigns for **line-based**
-  hunks, staging (`stage_hunk`), blame, and preview — everything dft-signs
-  deliberately does *not* do — and let dft-signs add the **structural** verdict
-  on top.
+Two rules govern the whole plugin:
 
-### Previewing changes: span preview, not hunk preview
+1. **It subtracts emphasis; it never adds it.** Every cell it touches is a cell
+   gitsigns already drew. It will never mark a line gitsigns left alone.
+2. **When in doubt, it does nothing.** A missing overlay is a cosmetic
+   disappointment. A wrong overlay hides a real change. Every ambiguity resolves
+   toward leaving the cell lit.
 
-There is **no `<leader>hp` equivalent**, and that is deliberate. gitsigns'
-preview works because a line-based hunk *is* a block of old text to show. A
-difftastic chunk is a set of **token-level** changes scattered across lines that
-may have reflowed — there is no honest "here are the N old lines this replaced"
-to display. Faking one would be the exact line-based framing this plugin exists
-to avoid (§2/§9).
+Because of rule 2, the failure mode is *"the plugin isn't installed"*: if
+difftastic is missing, errors, times out, hits the size limit, or can't parse the
+language, you get plain, unmodified gitsigns. Run `:DifftSigns status` or
+`:checkhealth difftsigns` to find out why.
 
-Instead, `:DftSigns preview_span` (`<leader>xp` in the example config) previews
-the **span under the cursor**: a float showing the **actual source lines** from
-the reference (was) side and the buffer (now) side, with the changed tokens
-highlighted in place. Changed lines are marked with `>`; a few unchanged lines
-around each change are shown dimmed for context (configurable via
-`preview_context`, default 2), so reorders and moves read correctly — you see
-both lines that swapped, not a lone token stripped of its surroundings.
+## What it catches, and what it doesn't
 
-For a classic old-text block preview, use **gitsigns' `<leader>hp`** — it's
-attached to the same buffer and a line-based preview is the right tool for
-"show me the old text." Keep both: dft-signs tells you *which lines structurally
-changed and what tokens*, gitsigns shows you *the old line block*.
+Verified against Difftastic 0.69.0:
 
-### Required: use a **fixed-width** `signcolumn` (not `auto`)
+| Change | Result |
+|---|---|
+| Reindent / reformat | fully dimmed ✓ |
+| Prettier-style rewrap (incl. added trailing comma) | fully dimmed ✓ |
+| Wrap a block in `if` | new lines lit, reindented body dimmed ✓ |
+| Variable rename | lit, exact tokens marked ✓ |
+| Genuine deletion | lit ✓ |
+| Removed blank lines | dimmed ✓ |
+| Reindent + argument removed from a call | line stays lit, removed token marked ✓ |
+| Reindent + value changed | line stays lit, changed token marked ✓ |
+| **Moved / reordered code** | **stays lit — see below** |
 
-**dft-signs' markers are invisible under `signcolumn=auto`.** This is the single
-most important setting to get right, so it's first.
+**Moved code is not detected.** difftastic 0.69 has no move detection: a
+reordered function is reported as a deletion plus an addition with every token
+changed. difftsigns therefore leaves it fully lit. That is the safe direction to
+fail — nothing real is ever hidden — but it does mean a reorder looks exactly as
+noisy as it does today.
 
-dft-signs places its signs *ephemerally* from a decoration provider (recomputed
-per redraw, only for on-screen lines — see §6). Neovim's `auto` sign column
-sizes itself from **non-ephemeral, placed** signs only; ephemeral decoration
-signs don't count. So `auto` decides "no signs → no column," reserves zero
-width, and dft-signs' markers render into a gutter that isn't there. You see
-nothing, even though the diff ran correctly.
+### Other limitations
 
-Use a fixed width instead:
-
-```lua
-vim.opt.signcolumn = "yes:2"   -- always reserve two sign columns
-```
-
-Two columns (rather than `yes:1`) also lets dft-signs coexist with gitsigns —
-see below.
-
-### Coexisting with gitsigns in the same gutter
-
-With a single sign column, if a line has *both* a gitsigns sign and a dft-signs
-sign, only one glyph fits, and dft-signs' higher extmark priority (span = 8,
-change = 20, both above gitsigns' default 6) means **dft-signs wins the cell and
-hides the gitsigns sign** on that line. `signcolumn = "yes:2"` gives each plugin
-its own column, so both show.
-
-If instead you'd rather gitsigns win contested cells, lower dft-signs' priority
-below 6 — currently that means editing `PRIORITY_SPAN`/`PRIORITY_CHANGE` in
-`signs.lua` (exposing these via `setup()` is a reasonable future addition).
-
-## Known limitations
-
-- **No staging.** Structural chunks can't round-trip through `git apply`. Out of
-  scope, permanently — that's gitsigns/mini.diff's job on a line-based backend.
-- **Latency.** We spawn difftastic (tree-sitter + graph diff) out of process. We
-  are slower than any `vim.diff` gutter, by design. Mitigated with debounce +
-  in-flight cancellation.
-- **Schema fragility.** difftastic's `--display json` is gated behind
-  `DFT_UNSTABLE=yes` and may change. All schema knowledge is quarantined in
-  `core.lua`; a version mismatch warns loudly.
-- **Language fallback.** For languages difftastic can't parse it falls back to a
-  line diff (reported as `Text`). We detect this and **clear** signs rather than
-  mislabel a line diff as structural.
+- **Staged hunks are not annotated.** gitsigns diffs those against a different
+  base, which would need a second difftastic run.
+- **Unsupported languages get nothing.** difftastic falls back to a line diff for
+  those; presenting that as a structural verdict would be a lie, so we stand down.
+- **No staging.** Structural changes don't round-trip through `git apply`.
+  gitsigns already does staging correctly, and it's right there.
+- **Two of the four things read from gitsigns are internal APIs**
+  (`gitsigns.cache`, `gitsigns.hunks.calc_signs`). If a gitsigns update moves
+  them, difftsigns goes inert and says so via `:checkhealth` rather than
+  rendering something wrong.
 
 ## Development
 
-```
+```sh
 make test
 ```
 
-Runs the plenary test suite headlessly. Parser tests validate against real
-difftastic fixtures in `tests/fixtures/` (captured from the actual binary, not
-hand-written). Tests touching difft skip themselves if it isn't installed.
+91 tests: fixture-driven parsing (every fixture is captured real difft output),
+the pure verdict join, on-screen gutter assertions via `screenstring`, and
+end-to-end tests against a real git repo, real gitsigns, and the real difft
+binary.
 
-## Architecture
-
-| Module        | Responsibility                                              |
-|---------------|-------------------------------------------------------------|
-| `core.lua`    | `run_diff` + **all** difftastic JSON parsing → `Region[]`   |
-| `process.lua` | libuv spawn of difft with cancellation; temp files          |
-| `signs.lua`   | decoration provider, 2 namespaces, extmark placement        |
-| `attach.lua`  | buf watcher, debounce, reference-text resolution            |
-| `git.lua`     | `git show <rev>:<path>`, `.git` watcher, cache               |
-| `octo.lua`    | review-mode adapter feeding blob/blob into core             |
-| `debounce.lua`| trailing debounce + async throttle                          |
-| `config.lua`  | defaults + validation                                       |
-
-The layering enforces one invariant: difftastic knowledge lives only in
-`core.lua`/`process.lua`, git knowledge only in `git.lua`. Anything upstream
-that changes touches exactly one file.
-```
+Design history lives in `REDESIGN.md` (current), with `INITIAL_DESIGN.md` and
+`IMPLEMENTATION.md` kept as the record of an earlier, different plugin that drew
+its own gutter — and why that turned out to be the wrong idea.

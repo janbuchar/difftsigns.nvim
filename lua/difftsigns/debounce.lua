@@ -1,11 +1,11 @@
 --- debounce.lua
 ---
 --- Trailing debounce + async throttle, ported from gitsigns' proven pattern
---- (spec §5). Two primitives:
+--- (REDESIGN §6). Two primitives:
 ---
 ---   * debounce_trailing(ms, fn): coalesces a burst of calls into one call that
 ---     fires `ms` after the LAST call. This is what turns "every keystroke" into
----     "once you pause" (spec §5, 1.5s default).
+---     "once you pause" (REDESIGN §6, 1.5s default).
 ---
 ---   * throttle_by_id(fn): ensures an async `fn` for a given id never runs
 ---     concurrently with itself. If a call arrives while one is in flight, at
