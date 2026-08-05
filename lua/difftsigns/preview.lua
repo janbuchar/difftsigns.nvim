@@ -10,8 +10,16 @@
 --- lines — and difftastic's token ranges become annotation INSIDE it. Same
 --- philosophy as the gutter: don't build a parallel UI, enrich the existing one.
 ---
---- Three things are drawn that gitsigns alone cannot draw:
----   1. changed TOKENS highlighted within their lines (difft's byte ranges);
+--- The source lines are shown VERBATIM and syntax-highlighted like the buffer
+--- they came from: the float's filetype is set to the source buffer's, so
+--- treesitter/syntax colours them exactly as you'd read them in place. The -/+
+--- markers live in the SIGN COLUMN (not inline), so the source text starts at
+--- column 0 and the highlighter parses clean lines rather than diff-prefixed
+--- ones. Change emphasis is therefore a red/green BACKGROUND, not a foreground
+--- colour, so it stands out without fighting the syntax colours underneath.
+---
+--- Three things are drawn that syntax highlighting alone cannot:
+---   1. changed TOKENS washed with a directional background (difft's byte ranges);
 ---   2. reflow-only lines DIMMED, matching the gutter's verdict;
 ---   3. a header stating the split, so "3 of 5 lines are noise" is legible at a
 ---      glance rather than inferred.
@@ -38,11 +46,11 @@ end
 
 --- @class DifftSigns.PreviewLine
 --- @field text      string
---- @field hl        string|nil  -- whole-line highlight; nil when tokens carry the meaning
---- @field prefix_hl string|nil  -- highlight for the leading -/+ marker
---- @field token_hl  string|nil  -- directional group for this line's token ranges
+--- @field hl        string|nil  -- whole-line highlight; nil when syntax/tokens carry the meaning
+--- @field sign      string|nil  -- the sign-column marker: "-", "+", or nil for the header
+--- @field sign_hl   string|nil  -- directional colour for the sign marker
+--- @field token_hl  string|nil  -- directional BACKGROUND group for this line's token ranges
 --- @field tokens    { from: integer, to: integer }[]|nil  -- byte ranges to emphasise
---- @field offset    integer     -- byte offset the text was shifted by (the prefix)
 
 --- Group a whole verdict group's edits by side and line, so each source line can
 --- be drawn once with every changed token on it marked.
@@ -169,62 +177,61 @@ local function build(bufnr, group, ref)
   else
     header = ("%s %s%s%s"):format(kind, range, merged, trimmed)
   end
-  out[#out + 1] = { text = header, hl = "Title", offset = 0 }
+  out[#out + 1] = { text = header, hl = "Title" }
 
   --- Emit one source line.
   ---
-  --- WHERE THE COLOUR GOES, and why. When difftastic gives us token detail, the
-  --- tokens carry the whole meaning and a whole-line wash is worse than
-  --- redundant: it competes with the tokens for attention and dilutes the one
-  --- thing the preview exists to show. So a line with tokens gets NO line
-  --- highlight — only its changed tokens, coloured by direction (green added,
-  --- red removed) — plus its `-`/`+` marker, so the eye can still scan sides.
+  --- WHERE THE COLOUR GOES, and why. The line itself is drawn with the source
+  --- buffer's own syntax highlighting, so change emphasis must sit ON TOP of that
+  --- rather than replace it: changed tokens get a directional BACKGROUND wash
+  --- (green added, red removed) that leaves the syntax foreground legible, plus a
+  --- `-`/`+` marker in the sign column so sides stay scannable.
   ---
-  --- Three cases, in order:
-  ---   1. tokens present     -> tokens only. The precise answer.
-  ---   2. no detail at all   -> whole line. Only for whole-file created/deleted,
-  ---                            where difftastic omits chunks and we genuinely
-  ---                            know nothing more specific.
-  ---   3. significant, but no tokens on THIS side -> uncoloured. Happens via
-  ---      cross-attribution: `doThing(alpha, beta)` -> `doThing(alpha)` is real,
-  ---      but nothing was *added*, so the `+` line has no added token. Green
-  ---      would lie; dim would deny it is part of a real change. Neutral is the
-  ---      honest answer, and the `-` line above carries the red token.
-  ---   4. otherwise          -> dimmed, matching the gutter's reflow verdict.
+  --- Four cases, in order:
+  ---   1. tokens present     -> token backgrounds only, over syntax. The precise
+  ---                            answer.
+  ---   2. no detail at all   -> whole-line background wash, NO syntax. Only for
+  ---                            whole-file created/deleted, where difftastic omits
+  ---                            chunks and we know nothing more specific.
+  ---   3. significant, but no tokens on THIS side -> syntax only, no wash. Happens
+  ---      via cross-attribution: `doThing(alpha, beta)` -> `doThing(alpha)` is
+  ---      real, but nothing was *added*, so the `+` line has no added token. A
+  ---      wash would lie; dimming would deny it is part of a real change. The
+  ---      marker carries the side, and the `-` line above carries the red wash.
+  ---   4. otherwise          -> dimmed, matching the gutter's reflow verdict. The
+  ---      dim intentionally overrides syntax: "this is noise" is the point.
   ---
   --- @param prefix string       -- "-" or "+"
   --- @param text string
-  --- @param dir_hl string       -- DifftSignsRemoved / DifftSignsAdded
+  --- @param dir_bg string       -- DifftSignsRemovedBg / DifftSignsAddedBg
+  --- @param dir_hl string       -- DifftSignsRemoved / DifftSignsAdded (the marker)
   --- @param toks table[]|nil    -- token edits on this line, this side
   --- @param significant boolean
   --- @param no_detail boolean
-  local function push(prefix, text, dir_hl, toks, significant, no_detail)
-    local ranges, token_hl, line_hl, prefix_hl = nil, nil, nil, nil
+  local function push(prefix, text, dir_bg, dir_hl, toks, significant, no_detail)
+    local ranges, token_hl, line_hl = nil, nil, nil
 
     if toks ~= nil and #toks > 0 then
       ranges = {}
       for _, e in ipairs(toks) do
-        ranges[#ranges + 1] = { from = #prefix + e.col_start, to = #prefix + e.col_end }
+        ranges[#ranges + 1] = { from = e.col_start, to = e.col_end }
       end
-      token_hl = dir_hl
-      prefix_hl = dir_hl
+      token_hl = dir_bg
     elseif no_detail and significant then
-      line_hl = dir_hl
-      prefix_hl = dir_hl
+      line_hl = dir_bg
     elseif significant then
-      prefix_hl = dir_hl -- part of a real change, but nothing changed on this side
+      -- syntax only; the marker carries the side
     else
       line_hl = "DifftSignsContext"
-      prefix_hl = "DifftSignsContext"
     end
 
     out[#out + 1] = {
-      text = prefix .. text,
+      text = text,
       hl = line_hl,
-      prefix_hl = prefix_hl,
+      sign = prefix,
+      sign_hl = dir_hl,
       token_hl = token_hl,
       tokens = ranges,
-      offset = #prefix,
     }
   end
 
@@ -238,7 +245,7 @@ local function build(bufnr, group, ref)
         if src ~= nil then
           -- A removed line is judged by the REFERENCE side: it has no buffer line
           -- of its own to consult.
-          push("-", src, "DifftSignsRemoved", by.lhs[lnum],
+          push("-", src, "DifftSignsRemovedBg", "DifftSignsRemoved", by.lhs[lnum],
             v.anchor_significant, v.no_token_detail)
         end
       end
@@ -253,17 +260,50 @@ local function build(bufnr, group, ref)
       for i, src in ipairs(lines) do
         local lnum = a.start + i - 1
         local owner = verdict_for_line[lnum] or v
-        push("+", src, "DifftSignsAdded", by.rhs[lnum],
+        push("+", src, "DifftSignsAddedBg", "DifftSignsAdded", by.rhs[lnum],
           verdict.is_significant(owner, lnum), owner.no_token_detail)
       end
     end
   end
 
   if #out == 1 then
-    out[#out + 1] = { text = "  (no line content to show)", hl = "Comment", offset = 0 }
+    out[#out + 1] = { text = "  (no line content to show)", hl = "Comment" }
   end
 
   return out
+end
+
+--- Give the float the source buffer's own syntax highlighting.
+---
+--- Prefer treesitter (it parses the real language and is what colours a modern
+--- buffer); fall back to legacy `:syntax` via a filetype only when no treesitter
+--- parser is installed. Failures are swallowed: a preview with no syntax colour
+--- is a mild downgrade, not a reason to refuse to open.
+---
+--- Only source lines are meant to be highlighted, but the highlighter parses the
+--- whole buffer (header included). That is harmless: every non-source line
+--- carries a whole-line extmark (Title/Comment/dim) placed above the syntax
+--- layer, so it paints over any stray syntax colour on those rows.
+---
+--- @param buf integer            -- the float's scratch buffer
+--- @param src_ft string          -- the source buffer's filetype
+local function apply_source_syntax(buf, src_ft)
+  if src_ft == nil or src_ft == "" then
+    return
+  end
+
+  local lang = vim.treesitter.language.get_lang and vim.treesitter.language.get_lang(src_ft) or src_ft
+  local ok = pcall(vim.treesitter.start, buf, lang)
+  if ok then
+    return
+  end
+
+  -- No parser: fall back to legacy syntax. Setting `syntax` (not `filetype`)
+  -- loads the highlighter without firing filetype autocmds — no LSP or plugins
+  -- attach to this throwaway buffer.
+  pcall(function()
+    vim.bo[buf].syntax = src_ft
+  end)
 end
 
 --- Show the preview for the hunk under the cursor.
@@ -314,16 +354,28 @@ function M.show(bufnr, winid)
   end
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, texts)
 
-  -- Both priorities are set EXPLICITLY, and the ordering between them is the
-  -- entire reason the structural highlight is visible at all.
+  -- The source buffer's syntax highlighting is applied to the source lines, so
+  -- they read exactly as they do in place. This sits UNDERNEATH our extmarks:
+  -- treesitter/syntax highlights are low priority (treesitter defaults to 100),
+  -- and our token/whole-line washes only touch the background, so the syntax
+  -- foreground stays legible through them. The one group that DOES override
+  -- syntax is DifftSignsContext (the dim), which is the point: a reflow-only line
+  -- should recede, colour and all. It also paints the header/no-content rows,
+  -- which are not source and would otherwise be mis-highlighted by the parser.
+  local src_ft = vim.bo[bufnr].filetype
+  apply_source_syntax(buf, src_ft)
+
+  -- Both priorities are set EXPLICITLY, and the ordering between them relative to
+  -- the syntax layer is what makes the structural highlight visible at all.
   --
   -- nvim_buf_set_extmark defaults `priority` to 4096. An earlier version set the
   -- whole-line highlight with no priority (so: 4096) and the token highlight to
   -- 200, on the assumption that "placed later wins". It does not — extmark
   -- precedence is by priority alone. The line highlight therefore painted over
   -- every token highlight and the structural change, the one thing this preview
-  -- exists to show, was invisible in every hunk.
-  local PRIORITY_LINE = 100
+  -- exists to show, was invisible in every hunk. Both must also sit ABOVE the
+  -- treesitter layer (priority 100) so the token wash and the dim actually show.
+  local PRIORITY_LINE = 150
   local PRIORITY_TOKEN = 200
 
   for i, l in ipairs(rendered) do
@@ -334,17 +386,20 @@ function M.show(bufnr, winid)
         end_row = row,
         end_col = #l.text,
         hl_group = l.hl,
+        -- Extend the wash/dim across the full row so a reformatted line reads as
+        -- one continuous block, like a real diff. Sits above the syntax layer so
+        -- the dim actually shows (a dimmed noise line must beat syntax colours).
+        hl_eol = true,
         priority = PRIORITY_LINE,
       })
     end
 
-    -- The leading -/+ marker, so sides remain scannable even when the line
-    -- content itself is left uncoloured.
-    if l.prefix_hl ~= nil and l.offset > 0 then
+    -- The leading -/+ marker, in the sign column, so sides stay scannable while
+    -- the source text starts at column 0 and highlights cleanly.
+    if l.sign ~= nil then
       vim.api.nvim_buf_set_extmark(buf, M.ns, row, 0, {
-        end_row = row,
-        end_col = math.min(l.offset, #l.text),
-        hl_group = l.prefix_hl,
+        sign_text = l.sign,
+        sign_hl_group = l.sign_hl,
         priority = PRIORITY_TOKEN,
       })
     end
@@ -365,7 +420,6 @@ function M.show(bufnr, winid)
 
   vim.bo[buf].modifiable = false
   vim.bo[buf].bufhidden = "wipe"
-  vim.bo[buf].filetype = "difftsigns-preview"
 
   local width = 0
   for _, t in ipairs(texts) do
@@ -382,18 +436,25 @@ function M.show(bufnr, winid)
   local row = (cursor_screen.row > 0) and (cursor_screen.row - win_top) or 0
   local gutter = vim.fn.getwininfo(winid)[1].textoff
 
+  -- Widen by 2 for the sign column that carries the -/+ markers: `style=minimal`
+  -- suppresses it by default, so we turn it back on below and must leave room.
+  local SIGN_WIDTH = 2
   local float = vim.api.nvim_open_win(buf, false, {
     relative = "win",
     win = winid,
     row = row + 1,
     col = gutter,
-    width = math.max(20, math.min(width + 1, math.floor(vim.o.columns * 0.85))),
+    width = math.max(20, math.min(width + SIGN_WIDTH, math.floor(vim.o.columns * 0.85))),
     height = math.min(#texts, 24),
     style = "minimal",
     border = "rounded",
     title = " difftsigns ",
     title_pos = "left",
   })
+
+  -- `style=minimal` sets signcolumn=no; the -/+ markers live there, so re-enable
+  -- it, pinned to one cell so the source text stays aligned with the header.
+  vim.wo[float].signcolumn = "yes:1"
 
   open_float = float
 

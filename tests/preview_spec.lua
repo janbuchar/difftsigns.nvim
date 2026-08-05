@@ -5,6 +5,10 @@
 --- tests assert on the two properties that make the new one useful — real source
 --- lines are present verbatim, and the structural verdict is visible in the
 --- float rather than only in the gutter.
+---
+--- Source lines are now shown VERBATIM (no inline -/+): the marker lives in the
+--- sign column (`l.sign`), the line carries the source's own syntax highlighting,
+--- and change emphasis is a red/green BACKGROUND (`*Bg` groups) over it.
 
 local core = require("difftsigns.core")
 local verdict = require("difftsigns.verdict")
@@ -36,6 +40,25 @@ local function joined(rendered)
   return table.concat(texts(rendered), "\n")
 end
 
+--- Index rendered lines by their verbatim source text (no -/+ prefix now).
+local function by_text(rendered)
+  local out = {}
+  for _, l in ipairs(rendered) do
+    out[l.text] = l
+  end
+  return out
+end
+
+--- The single removed / added source line in a rendered group, found by its
+--- sign-column marker rather than an inline prefix.
+local function marker_lines(rendered)
+  local minus, plus
+  for _, l in ipairs(rendered) do
+    if l.sign == "-" then minus = l elseif l.sign == "+" then plus = l end
+  end
+  return minus, plus
+end
+
 describe("preview building", function()
   before_each(function()
     config.setup({})
@@ -52,13 +75,15 @@ describe("preview building", function()
       { type = "change", added = { start = 6, count = 1 }, removed = { start = 6, count = 1 } },
     }, fixture("single_token"))
 
-    local out = joined(preview._build(buf, { set.verdicts[1] }, was))
-    assert.is_truthy(out:find("\n%-"), "removed lines are prefixed with -")
-    assert.is_truthy(out:find("\n%+"), "added lines are prefixed with +")
-    -- Each side's content must come from its own source: the reference from the
-    -- retained text, the buffer read live.
-    assert.is_truthy(out:find("%-  return x %* 2;"), "the reference line appears verbatim")
-    assert.is_truthy(out:find("%+  return x %* 3;"), "the buffer line appears verbatim")
+    local rendered = preview._build(buf, { set.verdicts[1] }, was)
+    local minus, plus = marker_lines(rendered)
+    assert.is_not_nil(minus, "a removed line is marked with a - sign")
+    assert.is_not_nil(plus, "an added line is marked with a + sign")
+    -- Each side's content must come from its own source, VERBATIM (the marker is
+    -- in the sign column, not inline): the reference from the retained text, the
+    -- buffer read live.
+    assert.are.equal("  return x * 2;", minus.text, "the reference line appears verbatim")
+    assert.are.equal("  return x * 3;", plus.text, "the buffer line appears verbatim")
 
     vim.api.nvim_buf_delete(buf, { force = true })
   end)
@@ -74,9 +99,12 @@ describe("preview building", function()
       { type = "change", added = { start = 2, count = 5 }, removed = { start = 2, count = 3 } },
     }, fixture("wrap_in_if"))
 
-    local out = joined(preview._build(buf, { set.verdicts[1] }, was))
+    local rendered = preview._build(buf, { set.verdicts[1] }, was)
+    local out = joined(rendered)
     assert.is_truthy(out:find("if %(enabled%) {"), "the new line must appear")
-    assert.is_truthy(out:find("%+    doThing%(%);"), "buffer content appears verbatim")
+    local bt = by_text(rendered)
+    assert.is_not_nil(bt["    doThing();"], "buffer content appears verbatim")
+    assert.are.equal("+", bt["    doThing();"].sign, "on the added side")
     vim.api.nvim_buf_delete(buf, { force = true })
   end)
 
@@ -117,23 +145,20 @@ describe("preview building", function()
     }, fixture("wrap_in_if"))
 
     local rendered = preview._build(buf, { set.verdicts[1] }, {})
-    local by_text = {}
-    for _, l in ipairs(rendered) do
-      by_text[l.text] = l
-    end
+    local bt = by_text(rendered)
 
-    -- A line with token detail carries NO whole-line wash: the tokens are the
-    -- answer, and washing the line would only compete with them.
-    local changed = by_text["+  if (enabled) {"]
+    -- A line with token detail carries NO whole-line wash: the token backgrounds
+    -- are the answer, and washing the whole line would compete with them.
+    local changed = bt["  if (enabled) {"]
     assert.is_nil(changed.hl, "a line with tokens must not be washed whole-line")
-    assert.are.equal("DifftSignsAdded", changed.token_hl, "its tokens are coloured as additions")
+    assert.are.equal("DifftSignsAddedBg", changed.token_hl, "its tokens get the added background")
     assert.is_true(#changed.tokens > 0)
-    assert.are.equal("DifftSignsAdded", changed.prefix_hl, "the + marker stays scannable")
+    assert.are.equal("DifftSignsAdded", changed.sign_hl, "the + marker stays scannable")
 
     -- Reflow-only lines still recede, exactly as in the gutter.
-    assert.are.equal("DifftSignsContext", by_text["+    doThing();"].hl, "reindented line recedes")
-    assert.are.equal("DifftSignsContext", by_text["+    return 1;"].hl, "reindented line recedes")
-    assert.is_nil(by_text["+    doThing();"].token_hl)
+    assert.are.equal("DifftSignsContext", bt["    doThing();"].hl, "reindented line recedes")
+    assert.are.equal("DifftSignsContext", bt["    return 1;"].hl, "reindented line recedes")
+    assert.is_nil(bt["    doThing();"].token_hl)
     vim.api.nvim_buf_delete(buf, { force = true })
   end)
 
@@ -141,8 +166,7 @@ describe("preview building", function()
     local function sides(rendered)
       local minus, plus = 0, 0
       for _, l in ipairs(rendered) do
-        local c = l.text:sub(1, 1)
-        if c == "-" then minus = minus + 1 elseif c == "+" then plus = plus + 1 end
+        if l.sign == "-" then minus = minus + 1 elseif l.sign == "+" then plus = plus + 1 end
       end
       return minus, plus
     end
@@ -248,20 +272,17 @@ describe("preview building", function()
     )
     local rendered = preview._build(buf, { set.verdicts[1] }, ref)
 
-    local minus, plus
-    for _, l in ipairs(rendered) do
-      if l.text:sub(1, 1) == "-" then minus = l end
-      if l.text:sub(1, 1) == "+" then plus = l end
-    end
+    local minus, plus = marker_lines(rendered)
 
-    assert.are.equal("DifftSignsRemoved", minus.token_hl, "the old token is red")
-    assert.are.equal("DifftSignsAdded", plus.token_hl, "the new token is green")
+    assert.are.equal("DifftSignsRemovedBg", minus.token_hl, "the old token gets the removed background")
+    assert.are.equal("DifftSignsAddedBg", plus.token_hl, "the new token gets the added background")
     assert.is_true(#minus.tokens > 0 and #plus.tokens > 0)
-    -- And neither line is washed: the tokens carry the meaning.
+    -- And neither line is washed: the token backgrounds carry the meaning over
+    -- the syntax highlighting.
     assert.is_nil(minus.hl)
     assert.is_nil(plus.hl)
-    assert.are.equal("DifftSignsRemoved", minus.prefix_hl)
-    assert.are.equal("DifftSignsAdded", plus.prefix_hl)
+    assert.are.equal("DifftSignsRemoved", minus.sign_hl)
+    assert.are.equal("DifftSignsAdded", plus.sign_hl)
     vim.api.nvim_buf_delete(buf, { force = true })
   end)
 
@@ -286,18 +307,15 @@ describe("preview building", function()
     )
     local rendered = preview._build(buf, { set.verdicts[1] }, { "keep;", "added_here;", "gone;" })
 
-    local by_text = {}
-    for _, l in ipairs(rendered) do
-      by_text[l.text] = l
-    end
-    local neutral = by_text["+  untouched;"]
+    local bt = by_text(rendered)
+    local neutral = bt["  untouched;"]
     assert.is_not_nil(neutral, "the line must still be rendered")
     assert.is_nil(neutral.token_hl, "no tokens on this side of this line")
-    assert.is_nil(neutral.hl, "significant with nothing added => neutral, not dimmed")
-    assert.are.equal("DifftSignsAdded", neutral.prefix_hl, "the marker still shows the side")
+    assert.is_nil(neutral.hl, "significant with nothing added => syntax only, not dimmed")
+    assert.are.equal("DifftSignsAdded", neutral.sign_hl, "the marker still shows the side")
 
-    -- Sanity: the line that DID gain a token is token-coloured.
-    assert.are.equal("DifftSignsAdded", by_text["+  added_here;"].token_hl)
+    -- Sanity: the line that DID gain a token gets the added background.
+    assert.are.equal("DifftSignsAddedBg", bt["  added_here;"].token_hl)
     vim.api.nvim_buf_delete(buf, { force = true })
   end)
 
@@ -310,17 +328,14 @@ describe("preview building", function()
       fixture("created")
     )
     local rendered = preview._build(buf, { set.verdicts[1] }, nil)
-    local plus
-    for _, l in ipairs(rendered) do
-      if l.text:sub(1, 1) == "+" then plus = l end
-    end
-    assert.are.equal("DifftSignsAdded", plus.hl,
-      "with no token detail, the whole line is all we can honestly colour")
+    local _, plus = marker_lines(rendered)
+    assert.are.equal("DifftSignsAddedBg", plus.hl,
+      "with no token detail, a whole-line background wash is all we can honestly draw")
     assert.is_nil(plus.token_hl)
     vim.api.nvim_buf_delete(buf, { force = true })
   end)
 
-  it("marks changed token byte ranges, offset by the +/- prefix", function()
+  it("marks changed token byte ranges verbatim, with no prefix offset", function()
     local buf = buf_with({
       "function greet(name: string) {",
       '  console.log("hello " + name);',
@@ -338,14 +353,14 @@ describe("preview building", function()
     local rendered = preview._build(buf, { set.verdicts[1] }, {})
     local marked
     for _, l in ipairs(rendered) do
-      if l.tokens ~= nil and #l.tokens > 0 and l.text:sub(1, 1) == "+" then
+      if l.tokens ~= nil and #l.tokens > 0 and l.sign == "+" then
         marked = l
       end
     end
     assert.is_not_nil(marked, "the added line should carry a token range")
-    -- One byte of "+" prefix shifts difft's 13..14 to 14..15.
-    assert.are.equal(14, marked.tokens[1].from)
-    assert.are.equal(15, marked.tokens[1].to)
+    -- The source line is verbatim now, so difft's 13..14 is used unshifted.
+    assert.are.equal(13, marked.tokens[1].from)
+    assert.are.equal(14, marked.tokens[1].to)
     -- And the range must actually cover the changed character.
     assert.are.equal("3", marked.text:sub(marked.tokens[1].from + 1, marked.tokens[1].to))
     vim.api.nvim_buf_delete(buf, { force = true })
@@ -478,16 +493,16 @@ describe("preview highlight priorities", function()
     local fbuf = vim.api.nvim_win_get_buf(float)
     local marks = vim.api.nvim_buf_get_extmarks(fbuf, preview.ns, 0, -1, { details = true })
 
-    -- Token/prefix marks are narrow; the line wash spans the row. Distinguish by
-    -- span rather than group name, since token and line colours can now coincide.
+    -- Token backgrounds (the *Bg groups) must sit above the whole-line highlight
+    -- (DifftSignsContext / the Bg wash), or the structural change is painted over.
+    -- Sign-column marks carry no inline hl_group, so they're skipped here.
     local line_prio, token_prio
     for _, m in ipairs(marks) do
       local d = m[4]
-      local width = (d.end_col or 0) - m[3]
-      if d.hl_group == "DifftSignsContext" or width > 4 then
-        line_prio = d.priority
-      elseif d.hl_group == "DifftSignsAdded" or d.hl_group == "DifftSignsRemoved" then
+      if d.hl_group == "DifftSignsAddedBg" or d.hl_group == "DifftSignsRemovedBg" then
         token_prio = math.max(token_prio or 0, d.priority)
+      elseif d.hl_group ~= nil then
+        line_prio = d.priority
       end
     end
 
@@ -561,6 +576,47 @@ describe("preview window", function()
     if vim.api.nvim_win_is_valid(float) then
       vim.api.nvim_win_close(float, true)
     end
+    overlay.forget(buf)
+    vim.api.nvim_win_close(win, true)
+    vim.api.nvim_buf_delete(buf, { force = true })
+  end)
+
+  it("gives the float the source's syntax and puts markers in the sign column", function()
+    local overlay = require("difftsigns.overlay")
+    config.setup({})
+    local buf = buf_with({ "a", "b", "c", "d", "e", "  return x * 3;", "}" })
+    -- A filetype with no treesitter parser, so the deterministic fallback path
+    -- (:syntax, not treesitter) is exercised regardless of what's installed.
+    vim.bo[buf].filetype = "difftsigns_fake_ft"
+    local win = vim.api.nvim_open_win(buf, true, {
+      relative = "editor", row = 0, col = 0, width = 60, height = 10,
+    })
+    local set = verdict.compute({
+      { type = "change", added = { start = 6, count = 1 }, removed = { start = 6, count = 1 } },
+    }, fixture("single_token"))
+    overlay.apply(buf, set, {}, { "a", "b", "c", "d", "e", "  return x * 2;", "}" })
+    vim.api.nvim_win_set_cursor(win, { 6, 0 })
+
+    local float = preview.show(buf, win)
+    assert.is_not_nil(float)
+    local fbuf = vim.api.nvim_win_get_buf(float)
+
+    -- The float wears the source's own highlighting, not the old sentinel ft.
+    assert.are.equal("difftsigns_fake_ft", vim.bo[fbuf].syntax,
+      "the float must carry the source buffer's syntax")
+
+    -- The -/+ markers are in the sign column, so source text starts at column 0
+    -- and highlights cleanly. sign_text marks carry no inline hl_group.
+    local signs = 0
+    for _, m in ipairs(vim.api.nvim_buf_get_extmarks(fbuf, preview.ns, 0, -1, { details = true })) do
+      if m[4].sign_text ~= nil then
+        signs = signs + 1
+        assert.is_truthy(m[4].sign_text:find("[-+]"), "sign marker is -/+")
+      end
+    end
+    assert.is_true(signs >= 2, "both the - and + lines must place a sign marker")
+
+    vim.api.nvim_win_close(float, true)
     overlay.forget(buf)
     vim.api.nvim_win_close(win, true)
     vim.api.nvim_buf_delete(buf, { force = true })

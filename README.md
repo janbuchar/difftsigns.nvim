@@ -95,14 +95,19 @@ you. Raising it also increases peak memory.
 | Group | Default | Purpose |
 |---|---|---|
 | `DifftSignsNoise` | links `NonText` | demoted (formatting-only) gutter cells |
-| `DifftSignsAdded` | links `Added` | added tokens in the preview (green) |
-| `DifftSignsRemoved` | links `Removed` | removed tokens in the preview (red) |
+| `DifftSignsAdded` | links `Added` | the preview's `+` sign marker (green) |
+| `DifftSignsRemoved` | links `Removed` | the preview's `-` sign marker (red) |
+| `DifftSignsAddedBg` | links `DiffAdd` | added-token **background** in the preview |
+| `DifftSignsRemovedBg` | links `DiffDelete` | removed-token **background** in the preview |
 | `DifftSignsContext` | links `Comment` | reflow-only lines in the preview |
 
-These link `Added`/`Removed` rather than `DiffAdd`/`DiffDelete` on purpose: the
-latter are diff-*mode* groups and are background-only in most colourschemes
-(nightfox renders them as `#3c4548` and `#403843` — two indistinguishable dark
-greys), which is useless for telling an addition from a removal.
+The sign markers link `Added`/`Removed` rather than `DiffAdd`/`DiffDelete` on
+purpose: the latter are diff-*mode* groups and are background-only in most
+colourschemes (nightfox renders them as `#3c4548` and `#403843` — two
+indistinguishable dark greys), useless for telling an addition from a removal.
+The token *backgrounds* are the opposite case: they sit behind syntax-highlighted
+source, so a background-only group is exactly what's wanted, and `DiffAdd`/
+`DiffDelete` are precisely that.
 
 The plugin's entire visual design is `DifftSignsNoise`. If dimming is too subtle
 or too strong in your colourscheme, that's the knob.
@@ -114,6 +119,12 @@ familiar shape — removed lines, then added lines — with two things gitsigns 
 show: the **exact changed tokens** highlighted, and the reflow-only lines
 **dimmed**, plus a header quantifying the split.
 
+The source lines are shown **verbatim and syntax-highlighted just like the buffer
+they came from** — the `-`/`+` markers live in the sign column, not inline, so the
+highlighter parses clean lines. Change emphasis is therefore a **red/green
+background** behind the changed tokens rather than a foreground colour, so it
+stands out without fighting the syntax colours underneath.
+
 **A one-sided change shows one side.** If every token difftastic reported lives on
 one side, the other side is dead weight, so it isn't printed — the header says
 `· additions only` or `· deletions only`. In practice this collapses most hunks by
@@ -122,20 +133,23 @@ half:
 ```
 git:                                    difftsigns:
 -import type { IConcurrencySystem }     change @@ -7,1 +7,1 @@ · additions only
-      from './concurrency_system.js';   +import type { ConcurrencyConsumer,
-+import type { ConcurrencyConsumer,           IConcurrencySystem } from './...';
-      IConcurrencySystem } from './...            ^^^^^^^^^^^^^^^^^^^ green
+      from './concurrency_system.js';  +│ import type { ConcurrencyConsumer,
++import type { ConcurrencyConsumer,      │     IConcurrencySystem } from './...';
+      IConcurrencySystem } from './...   ^^^^^^^^^^^^^^^^^^^ green background
 ```
+
+(The `+` sits in the sign column; the source keeps its syntax colours.)
 
 A formatting-only hunk keeps both sides — there's no relevant part to pick, and
 seeing the reflow is the point.
 
-**Only the changed tokens are coloured, not the whole line** — green for added,
-red for removed. Once difftastic has told us precisely which tokens changed, a
-whole-line wash is worse than redundant: it competes with the token highlight for
-attention. Lines that were only reformatted stay dimmed, matching the gutter. A
-whole-line colour appears in exactly one case: a brand-new or deleted file, where
-difftastic supplies no token detail and the line is all we can honestly colour.
+**Only the changed tokens are washed, not the whole line** — a green background
+for added, red for removed, over the syntax-highlighted source. Once difftastic
+has told us precisely which tokens changed, a whole-line wash is worse than
+redundant: it competes with the token highlight for attention. Lines that were
+only reformatted stay dimmed, matching the gutter. A whole-line wash appears in
+exactly one case: a brand-new or deleted file, where difftastic supplies no token
+detail and the line is all we can honestly colour.
 
 It previews the whole **contiguous run** of hunks, not one hunk. gitsigns computes
 hunks at zero context and (with `diff_opts.linematch`) can split a single logical

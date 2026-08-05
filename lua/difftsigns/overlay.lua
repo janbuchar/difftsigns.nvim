@@ -51,7 +51,7 @@ function M.setup_highlights()
   ensure("DifftSignsNoise", "NonText")
   ensure("DifftSignsContext", "Comment")
 
-  -- Directional token colours for the preview.
+  -- Directional marker colours for the preview's -/+ signs, in the sign column.
   --
   -- These link `Added`/`Removed` rather than `DiffAdd`/`DiffDelete` deliberately.
   -- DiffAdd/DiffDelete are diff-MODE groups and are background-only in most
@@ -61,6 +61,14 @@ function M.setup_highlights()
   -- foreground groups (`:h hl-Added`) and give actual green and red.
   ensure("DifftSignsAdded", "Added")
   ensure("DifftSignsRemoved", "Removed")
+
+  -- Directional BACKGROUNDS for changed tokens. The source line now carries the
+  -- buffer's own syntax highlighting (treesitter/syntax), so the token emphasis
+  -- must not fight it for the foreground — a green/red *wash behind* the token
+  -- leaves the syntax colour legible while still making the change pop. This is
+  -- exactly the one thing DiffAdd/DiffDelete are good for: background-only groups.
+  ensure("DifftSignsAddedBg", "DiffAdd")
+  ensure("DifftSignsRemovedBg", "DiffDelete")
 end
 
 --- Resolve Neovim's "0 means current buffer" convention to a real buffer number.
