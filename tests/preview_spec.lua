@@ -579,4 +579,80 @@ describe("preview window", function()
     vim.api.nvim_win_close(win, true)
     vim.api.nvim_buf_delete(buf, { force = true })
   end)
+
+  -- A `]c` that keeps the preview open re-shows it after navigating. Two things
+  -- must hold or that mapping breaks: is_open() must report an open float, and a
+  -- re-show must supersede the previous float rather than leak a second one that
+  -- then dismisses the new one on its own pending CursorMoved.
+  it("re-showing supersedes the open float instead of leaking one", function()
+    local overlay = require("difftsigns.overlay")
+    config.setup({})
+    local buf = buf_with({ "const a = 1;", "const b = 2;", "const c = 3;", "const d = 4;",
+      "const e = 5;", "  return x * 3;", "}" })
+    local win = vim.api.nvim_open_win(buf, true, {
+      relative = "editor", row = 0, col = 0, width = 60, height = 10,
+    })
+    local set = verdict.compute({
+      { type = "change", added = { start = 6, count = 1 }, removed = { start = 6, count = 1 } },
+    }, fixture("single_token"))
+    overlay.apply(buf, set, {}, { "a", "b", "c", "d", "e", "  return x * 2;", "}" })
+    vim.api.nvim_win_set_cursor(win, { 6, 0 })
+
+    assert.is_false(preview.is_open(), "no preview open before the first show")
+
+    local first = preview.show(buf, win)
+    assert.is_not_nil(first)
+    assert.is_true(preview.is_open())
+
+    local second = preview.show(buf, win)
+    assert.is_not_nil(second)
+    assert.is_true(preview.is_open())
+    assert.is_false(vim.api.nvim_win_is_valid(first),
+      "the previous float must be closed when the preview is re-shown")
+    assert.is_true(vim.api.nvim_win_is_valid(second))
+
+    vim.api.nvim_win_close(second, true)
+    overlay.forget(buf)
+    vim.api.nvim_win_close(win, true)
+    vim.api.nvim_buf_delete(buf, { force = true })
+  end)
+
+  -- The bug behind "]c still closes the preview": gitsigns' async nav_hunk sets
+  -- the cursor and then emits trailing CursorMoved events AT THE NEW POSITION. A
+  -- dismissal that closed on the first CursorMoved unconditionally killed the
+  -- float a re-show had just opened at that position. The float must survive a
+  -- CursorMoved that lands on its own anchor, and only close on a real move away.
+  it("survives a CursorMoved that stays on the anchor, closes on a real move", function()
+    local overlay = require("difftsigns.overlay")
+    config.setup({})
+    local buf = buf_with({ "const a = 1;", "const b = 2;", "const c = 3;", "const d = 4;",
+      "const e = 5;", "  return x * 3;", "}" })
+    local win = vim.api.nvim_open_win(buf, true, {
+      relative = "editor", row = 0, col = 0, width = 60, height = 10,
+    })
+    local set = verdict.compute({
+      { type = "change", added = { start = 6, count = 1 }, removed = { start = 6, count = 1 } },
+    }, fixture("single_token"))
+    overlay.apply(buf, set, {}, { "a", "b", "c", "d", "e", "  return x * 2;", "}" })
+    vim.api.nvim_win_set_cursor(win, { 6, 0 })
+
+    local float = preview.show(buf, win)
+    assert.is_not_nil(float)
+
+    -- A CursorMoved fired without the cursor actually moving (the spurious one).
+    vim.api.nvim_exec_autocmds("CursorMoved", { buffer = buf })
+    assert.is_true(vim.api.nvim_win_is_valid(float),
+      "a CursorMoved on the anchor line must NOT dismiss the preview")
+
+    -- Now a genuine move off the hunk.
+    vim.api.nvim_win_set_cursor(win, { 1, 0 })
+    vim.api.nvim_exec_autocmds("CursorMoved", { buffer = buf })
+    assert.is_false(vim.api.nvim_win_is_valid(float),
+      "a real move off the anchor must dismiss the preview")
+    assert.is_false(preview.is_open())
+
+    overlay.forget(buf)
+    vim.api.nvim_win_close(win, true)
+    vim.api.nvim_buf_delete(buf, { force = true })
+  end)
 end)

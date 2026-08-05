@@ -24,6 +24,18 @@ local M = {}
 
 M.ns = vim.api.nvim_create_namespace("difftsigns_preview")
 
+--- The float currently on screen, so a `]c`/`[c` mapping can ask whether a
+--- preview is open and re-show it after moving, instead of gitsigns-style
+--- navigation just dismissing it on the cursor move it causes.
+--- @type integer|nil
+local open_float = nil
+
+--- Whether a preview float is currently on screen.
+--- @return boolean
+function M.is_open()
+  return open_float ~= nil and vim.api.nvim_win_is_valid(open_float)
+end
+
 --- @class DifftSigns.PreviewLine
 --- @field text      string
 --- @field hl        string|nil  -- whole-line highlight; nil when tokens carry the meaning
@@ -268,6 +280,14 @@ function M.show(bufnr, winid)
     winid = vim.api.nvim_get_current_win()
   end
 
+  -- Re-showing (e.g. from a `]c` that advanced to the next hunk): drop the old
+  -- float first, otherwise its still-pending CursorMoved autocmd would close the
+  -- new one the moment the cursor settles.
+  if M.is_open() then
+    vim.api.nvim_win_close(open_float, true)
+    open_float = nil
+  end
+
   local set = overlay.verdicts(bufnr)
   if set == nil then
     local reason = overlay.status(bufnr)
@@ -352,10 +372,21 @@ function M.show(bufnr, winid)
     width = math.max(width, vim.fn.strdisplaywidth(t))
   end
 
+  -- Pin the float to the start of the text rather than the cursor column, so it
+  -- always lands in the same place regardless of where the cursor sits on the
+  -- line. `textoff` is the gutter width (number + sign + fold columns), so the
+  -- float clears them and the gutter stays visible. Vertically it tracks the
+  -- cursor's screen row (accounting for wrap/folds via screenpos), just below it.
+  local win_top = vim.api.nvim_win_get_position(winid)[1]
+  local cursor_screen = vim.fn.screenpos(winid, vim.api.nvim_win_get_cursor(winid)[1], 1)
+  local row = (cursor_screen.row > 0) and (cursor_screen.row - win_top) or 0
+  local gutter = vim.fn.getwininfo(winid)[1].textoff
+
   local float = vim.api.nvim_open_win(buf, false, {
-    relative = "cursor",
-    row = 1,
-    col = 0,
+    relative = "win",
+    win = winid,
+    row = row + 1,
+    col = gutter,
     width = math.max(20, math.min(width + 1, math.floor(vim.o.columns * 0.85))),
     height = math.min(#texts, 24),
     style = "minimal",
@@ -364,14 +395,47 @@ function M.show(bufnr, winid)
     title_pos = "left",
   })
 
-  -- Dismiss on the next cursor move, like gitsigns' own preview.
-  vim.api.nvim_create_autocmd({ "CursorMoved", "InsertEnter", "BufLeave" }, {
-    once = true,
+  open_float = float
+
+  -- Dismiss when the cursor genuinely LEAVES the hunk, like gitsigns' own
+  -- preview — not on the first CursorMoved unconditionally. gitsigns' async
+  -- nav_hunk sets the cursor and then emits trailing CursorMoved/redraw events at
+  -- the new position; a `once` autocmd fired on one of those and closed the float
+  -- a `]c` re-show had just opened, so the preview never survived a jump. Anchor
+  -- on the position we opened at and only close on a real move away from it.
+  local anchor_win = winid
+  local anchor_pos = vim.api.nvim_win_get_cursor(winid)
+
+  local function dismiss()
+    if vim.api.nvim_win_is_valid(float) then
+      vim.api.nvim_win_close(float, true)
+    end
+    if open_float == float then
+      open_float = nil
+    end
+  end
+
+  vim.api.nvim_create_autocmd("CursorMoved", {
     callback = function()
-      if vim.api.nvim_win_is_valid(float) then
-        vim.api.nvim_win_close(float, true)
+      -- Gone once the float is closed (by us, a re-show, or the user).
+      if not vim.api.nvim_win_is_valid(float) then
+        return true
+      end
+      if not vim.api.nvim_win_is_valid(anchor_win) then
+        dismiss()
+        return true
+      end
+      local cur = vim.api.nvim_win_get_cursor(anchor_win)
+      if cur[1] ~= anchor_pos[1] or cur[2] ~= anchor_pos[2] then
+        dismiss()
+        return true
       end
     end,
+  })
+
+  vim.api.nvim_create_autocmd({ "InsertEnter", "BufLeave" }, {
+    once = true,
+    callback = dismiss,
   })
 
   return float
