@@ -64,6 +64,26 @@ local function build(bufnr, group, ref)
   local out = {}
   local by = edits_by_side(group)
 
+  -- ONE-SIDED CHANGES SHOW ONE SIDE.
+  --
+  -- If every token difftastic reported lives on one side, the other side has
+  -- nothing to say and printing it is pure dead weight — you get a column of
+  -- lines with no colour on them, and have to work out for yourself that none of
+  -- them is the point. Observed in crawlee: adding an argument rendered the old
+  -- line in full underneath, entirely uncoloured, purely to be ignored.
+  --
+  -- Note this is decided by TOKEN DETAIL, not by line counts: gitsigns calls a
+  -- hunk a `change` whenever both sides have lines, but a change can be
+  -- semantically pure-addition (a wrapped block, an added argument) or
+  -- pure-deletion (a removed argument) with the opposite side merely reindented.
+  --
+  -- When NEITHER side has tokens the hunk is formatting-only, and then both sides
+  -- ARE the information — that is the one case where seeing the reflow matters.
+  local has_lhs = next(by.lhs) ~= nil
+  local has_rhs = next(by.rhs) ~= nil
+  local show_removed = has_lhs or not has_rhs
+  local show_added = has_rhs or not has_lhs
+
   -- Aggregate the group into one unified-diff-style range, and one verdict
   -- lookup per buffer line.
   local summary_sig, summary_noise = 0, 0
@@ -112,6 +132,16 @@ local function build(bufnr, group, ref)
     rem_start or rem_anchor or 0, rem_count,
     add_start or add_anchor or 0, add_count
   )
+
+  -- Say so when a side is suppressed, but only when its absence would be
+  -- surprising — i.e. the hunk really does have lines there and we chose not to
+  -- print them. For an `add`/`delete` hunk the one-sidedness is already obvious.
+  local trimmed = ""
+  if not show_removed and rem_count > 0 then
+    trimmed = " · additions only"
+  elseif not show_added and add_count > 0 then
+    trimmed = " · deletions only"
+  end
   -- Make it explicit when several gitsigns hunks were merged, so the aggregated
   -- range is not mistaken for a single hunk gitsigns would stage as a unit.
   local merged = #group > 1 and (" (%d hunks)"):format(#group) or ""
@@ -119,13 +149,13 @@ local function build(bufnr, group, ref)
   -- Header: the one line that makes the plugin's judgement explicit.
   local header
   if summary_noise > 0 and summary_sig > 0 then
-    header = ("%s %s%s  %d real, %d formatting-only")
-      :format(kind, range, merged, summary_sig, summary_noise)
+    header = ("%s %s%s%s  %d real, %d formatting-only")
+      :format(kind, range, merged, trimmed, summary_sig, summary_noise)
   elseif summary_noise > 0 and summary_sig == 0 then
-    header = ("%s %s%s  formatting only — no structural change")
-      :format(kind, range, merged)
+    header = ("%s %s%s%s  formatting only — no structural change")
+      :format(kind, range, merged, trimmed)
   else
-    header = ("%s %s%s"):format(kind, range, merged)
+    header = ("%s %s%s%s"):format(kind, range, merged, trimmed)
   end
   out[#out + 1] = { text = header, hl = "Title", offset = 0 }
 
@@ -188,7 +218,7 @@ local function build(bufnr, group, ref)
 
   -- Removed side, from the retained reference text, in buffer order across the
   -- whole group.
-  if ref ~= nil then
+  if ref ~= nil and show_removed then
     for _, v in ipairs(group) do
       local r = v.hunk.removed
       for lnum = r.start, r.start + r.count - 1 do
@@ -204,7 +234,7 @@ local function build(bufnr, group, ref)
   end
 
   -- Added side, read live from the buffer, in buffer order across the group.
-  for _, v in ipairs(group) do
+  for _, v in ipairs(show_added and group or {}) do
     local a = v.hunk.added
     if a.count > 0 then
       local lines = vim.api.nvim_buf_get_lines(bufnr, a.start - 1, a.start - 1 + a.count, false)

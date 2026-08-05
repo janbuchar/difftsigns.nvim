@@ -16,6 +16,7 @@ local M = {}
 --- @field difft_cmd              string   -- path to / wrapper around difftastic
 --- @field debounce_ms            integer  -- trailing debounce before re-diffing
 --- @field max_filesize           integer  -- skip beyond this; difft falls back past it anyway
+--- @field graph_limit            integer|nil -- difft --graph-limit; nil = difft's default
 --- @field noise_hl               string   -- highlight for demoted (noise) cells
 --- @field noise_text             string|nil -- glyph override; nil = mirror gitsigns'
 --- @field priority_offset        integer  -- added to gitsigns' sign_priority
@@ -39,6 +40,27 @@ M.defaults = {
   -- line diff, which we must never present as a structural verdict, so we stop
   -- asking rather than mislabel the answer.
   max_filesize = 1024 * 1024,
+
+  -- Passed to difftastic as --graph-limit. nil leaves difftastic's own default
+  -- (3,000,000) alone.
+  --
+  -- This is the knob for "why does the plugin do nothing on this file". difftastic
+  -- abandons the structural diff when its internal graph exceeds this many
+  -- vertices and returns a line diff, which we refuse to render. Measured on a
+  -- 708-line TypeScript test file with ~50 changed lines:
+  --
+  --     limit        outcome                    time
+  --     100,000      gave up                    0.4 s
+  --     1,000,000    gave up                    2.6 s
+  --     3,000,000    gave up (difft default)    7.9 s
+  --     5,000,000    STRUCTURAL DIFF            7.7 s
+  --
+  -- Note the shape of that table: at the default, difftastic spends eight seconds
+  -- and then tells you nothing. Raising the limit buys real answers on
+  -- heavily-changed files at no extra cost over failing slowly; LOWERING it makes
+  -- hopeless cases fail fast and cheap. Both are defensible, which is why this is
+  -- a knob and not a decision baked in on your behalf.
+  graph_limit = nil,
 
   -- The entire visual design of the plugin is this one highlight group.
   noise_hl = "DifftSignsNoise",
@@ -75,6 +97,7 @@ local function validate(cfg)
     vim.validate("difft_cmd", cfg.difft_cmd, "string")
     vim.validate("debounce_ms", cfg.debounce_ms, "number")
     vim.validate("max_filesize", cfg.max_filesize, "number")
+    vim.validate("graph_limit", cfg.graph_limit, "number", true)
     vim.validate("noise_hl", cfg.noise_hl, "string")
     vim.validate("noise_text", cfg.noise_text, "string", true)
     vim.validate("priority_offset", cfg.priority_offset, "number")
@@ -88,6 +111,9 @@ local function validate(cfg)
     end
     if cfg.max_filesize < 0 then
       error("max_filesize must be >= 0")
+    end
+    if cfg.graph_limit ~= nil and cfg.graph_limit < 1 then
+      error("graph_limit must be >= 1")
     end
     if cfg.preview_context < 0 then
       error("preview_context must be >= 0")
@@ -119,7 +145,8 @@ end
 --- @return string|nil err
 local function check_unknown(opts)
   for k in pairs(opts) do
-    if M.defaults[k] == nil and k ~= "noise_text" and k ~= "on_attach" then
+    local nil_defaults = { noise_text = true, on_attach = true, graph_limit = true }
+    if M.defaults[k] == nil and not nil_defaults[k] then
       local known = vim.tbl_keys(M.defaults)
       table.sort(known)
       return false,

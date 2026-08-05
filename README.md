@@ -57,6 +57,7 @@ require("difftsigns").setup({
   noise_text     = nil,           -- nil = mirror gitsigns' glyph; set a string to override
   priority_offset = 1,            -- added to gitsigns' sign_priority to win the cell
   preview_context = 2,
+  graph_limit    = nil,           -- difft --graph-limit; nil = difft's default (3,000,000)
   language_overrides = {},        -- { ["*.foo"] = "javascript" }
   difft_version_expected = "0.69.0",
   on_attach = function(bufnr) end,
@@ -66,6 +67,28 @@ require("difftsigns").setup({
 `debounce_ms = 400` is derived from measurement, not taste: with difftastic
 0.69.0 a realistic single-token edit costs ~41 ms on a 1145-line TypeScript file
 and ~200–330 ms on a 6045-line one.
+
+### `graph_limit`, or "why does it do nothing on this file?"
+
+difftastic abandons the structural diff when its internal graph exceeds
+`--graph-limit` vertices and returns a **line diff** instead. difftsigns refuses to
+render that (it would mark every token on every changed line, spaces included), so
+you get plain gitsigns and `:DifftSigns status` says so.
+
+Measured on a 708-line TypeScript test file with ~50 changed lines:
+
+| `graph_limit` | outcome | time |
+|---|---|---|
+| 100,000 | gave up | 0.4 s |
+| 1,000,000 | gave up | 2.6 s |
+| **3,000,000** (difft default) | **gave up** | **7.9 s** |
+| 5,000,000 | structural diff | 7.7 s |
+
+Note the shape of that: at the default, difftastic spends eight seconds and then
+tells you nothing. Raising the limit buys real answers on heavily-changed files for
+no more time than failing slowly cost; lowering it makes hopeless cases fail fast
+and cheap. Both are reasonable, so this is a knob rather than a decision made for
+you. Raising it also increases peak memory.
 
 ### Highlight groups
 
@@ -90,6 +113,22 @@ or too strong in your colourscheme, that's the knob.
 familiar shape — removed lines, then added lines — with two things gitsigns can't
 show: the **exact changed tokens** highlighted, and the reflow-only lines
 **dimmed**, plus a header quantifying the split.
+
+**A one-sided change shows one side.** If every token difftastic reported lives on
+one side, the other side is dead weight, so it isn't printed — the header says
+`· additions only` or `· deletions only`. In practice this collapses most hunks by
+half:
+
+```
+git:                                    difftsigns:
+-import type { IConcurrencySystem }     change @@ -7,1 +7,1 @@ · additions only
+      from './concurrency_system.js';   +import type { ConcurrencyConsumer,
++import type { ConcurrencyConsumer,           IConcurrencySystem } from './...';
+      IConcurrencySystem } from './...            ^^^^^^^^^^^^^^^^^^^ green
+```
+
+A formatting-only hunk keeps both sides — there's no relevant part to pick, and
+seeing the reflow is the point.
 
 **Only the changed tokens are coloured, not the whole line** — green for added,
 red for removed. Once difftastic has told us precisely which tokens changed, a
@@ -184,6 +223,8 @@ noisy as it does today.
   base, which would need a second difftastic run.
 - **Unsupported languages get nothing.** difftastic falls back to a line diff for
   those; presenting that as a structural verdict would be a lie, so we stand down.
+- **Heavily-changed files may exceed difftastic's graph limit** and fall back the
+  same way. See [`graph_limit`](#graph_limit-or-why-does-it-do-nothing-on-this-file).
 - **No staging.** Structural changes don't round-trip through `git apply`.
   gitsigns already does staging correctly, and it's right there.
 - **Two of the four things read from gitsigns are internal APIs**
@@ -197,7 +238,7 @@ noisy as it does today.
 make test
 ```
 
-91 tests: fixture-driven parsing (every fixture is captured real difft output),
+106 tests: fixture-driven parsing (every fixture is captured real difft output),
 the pure verdict join, on-screen gutter assertions via `screenstring`, and
 end-to-end tests against a real git repo, real gitsigns, and the real difft
 binary.

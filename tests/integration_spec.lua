@@ -274,6 +274,55 @@ describe("difftsigns end to end", function()
     assert.are.same({}, dimmed(bufnr), "no overlay when we declined to answer")
   end)
 
+  it("REGRESSION: stands down when difftastic hits its graph limit", function()
+    -- With graph_limit tiny, difftastic gives up and returns a LINE diff labelled
+    -- "Text (exceeded DFT_GRAPH_LIMIT)". Rendering that would mark every token on
+    -- every changed line -- reading as though each hunk had been rewritten -- and
+    -- would dim nothing useful. We must place nothing and say why.
+    local path = dir .. "/limited.ts"
+    local base = {}
+    for i = 1, 60 do
+      base[i] = ("export const v%d = %d;"):format(i, i)
+    end
+    write(path, base)
+    commit(dir, "initial")
+
+    local bufnr = open_and_wait(path)
+    local edited = {}
+    for i = 1, 60 do
+      -- Change every line, interleaved, to blow the graph up.
+      edited[i] = ("export const v%d = %d; // %d"):format(i, i * 7, i)
+    end
+    vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, edited)
+    wait_for_hunks(bufnr, 1)
+
+    config.setup({ debounce_ms = 0, graph_limit = 1 })
+    run_pass(bufnr)
+    config.setup({ debounce_ms = 0 })
+
+    assert.are.same({}, dimmed(bufnr), "a line-diff fallback must never be rendered")
+    local reason = (overlay._state(bufnr) or {}).reason
+    assert.is_not_nil(reason, "the reason must be queryable")
+    assert.is_truthy(reason:find("graph limit") or reason:find("line diff"),
+      "the reason should name the graph limit: " .. tostring(reason))
+  end)
+
+  it("graph_limit is actually passed through to difftastic", function()
+    -- Guards the plumbing: a config value that never reaches the subprocess is
+    -- indistinguishable from one that does nothing.
+    local core = require("difftsigns.core")
+    local done, res = false, nil
+    core.run_diff(
+      { "const a = 1;" }, { "const a = 2;" },
+      { filename = "x.ts", graph_limit = 5000000 },
+      function(err, result) res = { err, result }; done = true end
+    )
+    vim.wait(10000, function() return done end, 20)
+    assert.is_true(done)
+    assert.is_nil(res[1])
+    assert.is_false(res[2].fallback, "a trivial diff must still succeed with a raised limit")
+  end)
+
   it("survives detach and leaves no marks behind", function()
     local path = dir .. "/detach.ts"
     write(path, { "function f() {", "  return 1;", "}" })

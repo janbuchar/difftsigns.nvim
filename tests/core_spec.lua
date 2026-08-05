@@ -183,6 +183,67 @@ describe("core.parse", function()
       assert.is_true(r.fallback)
     end)
 
+    -- REGRESSION. difftastic does not report a fallback with one fixed string.
+    -- Matching only the exact "Text" let "Text (exceeded DFT_GRAPH_LIMIT)" through,
+    -- so a LINE DIFF was presented as a structural verdict: every token on every
+    -- changed line marked, spaces included, which reads as a whole-hunk rewrite.
+    it("flags the graph-limit fallback, real difft output", function()
+      local r = fixture("graph_limit_fallback")
+      assert.are.equal("Text (exceeded DFT_GRAPH_LIMIT)", r.language)
+      assert.is_true(r.fallback, "a graph-limit fallback is NOT a structural verdict")
+      assert.is_truthy(r.fallback_reason:find("graph limit"),
+        "the reason must be actionable: " .. tostring(r.fallback_reason))
+    end)
+
+    it("flags every shape of difftastic's give-up language", function()
+      for _, lang in ipairs({
+        "Text",
+        "text",
+        "Text (exceeded DFT_GRAPH_LIMIT)",
+        "Text (exceeded DFT_BYTE_LIMIT)",
+        "Text (something new upstream)",
+      }) do
+        local r = core.parse({ language = lang, status = "changed", chunks = { {} } })
+        assert.is_true(r.fallback, "must be treated as a fallback: " .. lang)
+        assert.is_not_nil(r.fallback_reason, "must carry a reason: " .. lang)
+      end
+    end)
+
+    it("does not mistake a real language for a fallback", function()
+      for _, lang in ipairs({ "TypeScript", "Rust", "Lua", "Plain Text Config" }) do
+        local r = core.parse({ language = lang, status = "changed", chunks = { {} } })
+        assert.is_false(r.fallback, "must remain a structural verdict: " .. lang)
+      end
+    end)
+
+    it("catches a line diff by SHAPE even if the language looks legitimate", function()
+      -- Belt and braces, independent of the unstable language string: a genuine
+      -- structural diff never reports whitespace as a changed token (verified
+      -- across every fixture, including a 46-edit reorder). So whitespace edits
+      -- mean a line diff, whatever the label claims.
+      local r = core.parse({
+        language = "TypeScript",
+        status = "changed",
+        chunks = { { {
+          lhs = { line_number = 0, changes = {
+            { start = 0, ["end"] = 1, content = " ", highlight = "normal" },
+          } },
+        } } },
+      })
+      assert.is_true(r.fallback, "whitespace-as-a-change betrays a line diff")
+      assert.is_truthy(r.fallback_reason:find("line diff"))
+    end)
+
+    it("does not trip the shape check on genuine structural output", function()
+      -- Every captured fixture must remain a structural verdict.
+      for _, name in ipairs({
+        "single_token", "rename", "deletion", "wrap_in_if", "reorder",
+        "token_removed_reindent", "token_added_reindent",
+      }) do
+        assert.is_false(fixture(name).fallback, name .. " must not be flagged as a fallback")
+      end
+    end)
+
     it("flags malformed output as fallback rather than claiming everything is noise", function()
       -- Critical asymmetry: an empty verdict would DIM real changes. When we
       -- cannot parse, we must say "no answer", never "no changes".

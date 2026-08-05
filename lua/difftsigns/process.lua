@@ -71,6 +71,13 @@ local function build_args(old_path, new_path, opts)
     table.insert(args, "--override=*:" .. opts.lang)
   end
 
+  -- Bound difftastic's worst case explicitly when asked. Left off entirely by
+  -- default so difftastic's own tuning applies.
+  if type(opts.graph_limit) == "number" then
+    table.insert(args, "--graph-limit")
+    table.insert(args, tostring(math.floor(opts.graph_limit)))
+  end
+
   if type(opts.language_overrides) == "table" then
     for glob, lang in pairs(opts.language_overrides) do
       table.insert(args, "--override=" .. glob .. ":" .. lang)

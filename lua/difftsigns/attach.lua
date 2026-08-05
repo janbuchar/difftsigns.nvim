@@ -172,6 +172,7 @@ local function do_update(bufnr, done)
     filename = vim.api.nvim_buf_get_name(bufnr),
     difft_cmd = config.values.difft_cmd,
     language_overrides = config.values.language_overrides,
+    graph_limit = config.values.graph_limit,
   }, function(err, result)
     at.inflight = nil
 
@@ -193,7 +194,10 @@ local function do_update(bufnr, done)
     end
 
     if result.fallback then
-      stand_down(bufnr, ("difftastic could not diff %s structurally"):format(result.language))
+      -- Say WHY, not just that. "difftastic hit its graph limit" is actionable
+      -- (raise graph_limit); "no structural parser for this file type" is not.
+      stand_down(bufnr, result.fallback_reason
+        or ("difftastic could not diff %s structurally"):format(tostring(result.language)))
       done()
       return
     end

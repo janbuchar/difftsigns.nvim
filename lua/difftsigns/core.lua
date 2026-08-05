@@ -35,19 +35,49 @@ local M = {}
 --- @field language        string
 --- @field status          "changed"|"unchanged"|"created"|"deleted"
 --- @field fallback        boolean  -- difft could not diff structurally
+--- @field fallback_reason string|nil -- why, in words, for the status line
 --- @field all_significant boolean  -- whole-file created/deleted: everything counts
 --- @field changed_rhs     table<integer, true>  -- buffer-side lines that really changed
 --- @field changed_lhs     table<integer, true>  -- reference-side lines that really changed
 --- @field edits           DifftSigns.Edit[]
 
--- Languages difftastic reports when it has given up on a structural diff and
--- fallen back to a plain line diff. We must never present that as a structural
--- verdict: a line-diff fallback would mark reindented lines as changed, which is
--- precisely the noise this plugin exists to suppress. Treated as "no answer".
-local FALLBACK_LANGUAGES = {
-  ["Text"] = true,
-  ["text"] = true,
-}
+--- Has difftastic given up on structural diffing and returned a line diff?
+---
+--- It signals this through `language`, but NOT with a single fixed string. Known
+--- forms, all of which must be caught:
+---
+---   "Text"                             -- no tree-sitter parser for this type
+---   "Text (exceeded DFT_GRAPH_LIMIT)"  -- diff graph too large; gave up
+---   "Text (exceeded DFT_BYTE_LIMIT)"   -- file too large; gave up
+---
+--- An earlier version matched only the exact strings "Text"/"text", so the
+--- parenthesised limit forms slipped through and the plugin presented a LINE DIFF
+--- as a structural verdict — marking every token on every changed line, spaces
+--- included, which reads as "the whole hunk was rewritten". That is the single
+--- outcome both design documents swore to avoid, so this is now matched by shape.
+---
+--- @param language string|nil
+--- @return boolean fallback
+--- @return string|nil reason  -- human-readable, for the status line
+local function classify_language(language)
+  if type(language) ~= "string" or language == "" then
+    return true, "difftastic reported no language"
+  end
+  if language:lower():find("exceeded dft_graph_limit", 1, true) then
+    return true, "difftastic hit its graph limit (raise graph_limit to diff this file)"
+  end
+  if language:lower():find("exceeded dft_byte_limit", 1, true) then
+    return true, "difftastic hit its byte limit (file too large)"
+  end
+  if language:lower():find("exceeded", 1, true) then
+    return true, "difftastic gave up: " .. language
+  end
+  -- Any "Text" or "Text (...)" form means no structural parse happened.
+  if language == "Text" or language == "text" or language:match("^[Tt]ext%s*%(") then
+    return true, "no structural parser for this file type"
+  end
+  return false, nil
+end
 
 --- @param n integer|nil  -- difftastic's 0-based line number
 --- @return integer|nil   -- our 1-based line number
@@ -60,10 +90,12 @@ end
 
 --- @return DifftSigns.DiffResult
 local function empty_result(language, status)
+  local fallback, reason = classify_language(language)
   return {
     language = language,
     status = status,
-    fallback = FALLBACK_LANGUAGES[language] == true,
+    fallback = fallback,
+    fallback_reason = reason,
     all_significant = false,
     changed_rhs = {},
     changed_lhs = {},
@@ -118,6 +150,30 @@ function M.parse(decoded)
         if type(entry) == "table" then
           M._harvest_entry(result, entry)
         end
+      end
+    end
+  end
+
+  -- SAFETY NET, independent of the `language` string.
+  --
+  -- The language field is our authoritative fallback signal, but it is also part
+  -- of an explicitly unstable schema and has already changed shape once under us.
+  -- So we additionally check the SHAPE of the output: a genuine structural diff
+  -- never reports whitespace as a changed token. Verified across every captured
+  -- fixture, including a 46-edit function reorder — zero whitespace-only edits.
+  -- A line-diff fallback, by contrast, marks every token on the line: the
+  -- observed graph-limit fallback reported 604 changes of which 323 were single
+  -- space characters.
+  --
+  -- So a whitespace-only "change" means we are looking at a line diff wearing a
+  -- language label, whatever that label happens to say.
+  if not result.fallback then
+    for _, e in ipairs(result.edits) do
+      if e.content ~= "" and e.content:match("^%s+$") ~= nil then
+        result.fallback = true
+        result.fallback_reason =
+          "difftastic returned a line diff, not a structural one (whitespace reported as changed)"
+        break
       end
     end
   end

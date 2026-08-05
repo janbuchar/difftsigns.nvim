@@ -42,30 +42,41 @@ describe("preview building", function()
   end)
 
   it("shows real source lines from both sides, verbatim", function()
+    -- Uses a genuinely two-sided change (a value edit), because a one-sided one
+    -- now renders only the relevant side by design.
+    local now = { "a", "b", "c", "d", "e", "  return x * 3;", "}" }
+    local was = { "a", "b", "c", "d", "e", "  return x * 2;", "}" }
+    local buf = buf_with(now)
+
+    local set = verdict.compute({
+      { type = "change", added = { start = 6, count = 1 }, removed = { start = 6, count = 1 } },
+    }, fixture("single_token"))
+
+    local out = joined(preview._build(buf, { set.verdicts[1] }, was))
+    assert.is_truthy(out:find("\n%-"), "removed lines are prefixed with -")
+    assert.is_truthy(out:find("\n%+"), "added lines are prefixed with +")
+    -- Each side's content must come from its own source: the reference from the
+    -- retained text, the buffer read live.
+    assert.is_truthy(out:find("%-  return x %* 2;"), "the reference line appears verbatim")
+    assert.is_truthy(out:find("%+  return x %* 3;"), "the buffer line appears verbatim")
+
+    vim.api.nvim_buf_delete(buf, { force = true })
+  end)
+
+  it("shows the buffer side verbatim for a one-sided (additive) change", function()
     local now = {
-      "function run() {",
-      "  if (enabled) {",
-      "    doThing();",
-      "    doOther();",
-      "    return 1;",
-      "  }",
-      "}",
+      "function run() {", "  if (enabled) {", "    doThing();",
+      "    doOther();", "    return 1;", "  }", "}",
     }
     local was = { "function run() {", "  doThing();", "  doOther();", "  return 1;", "}" }
     local buf = buf_with(now)
-
     local set = verdict.compute({
       { type = "change", added = { start = 2, count = 5 }, removed = { start = 2, count = 3 } },
     }, fixture("wrap_in_if"))
 
     local out = joined(preview._build(buf, { set.verdicts[1] }, was))
     assert.is_truthy(out:find("if %(enabled%) {"), "the new line must appear")
-    assert.is_truthy(out:find("doThing%(%);"), "source content must appear verbatim")
-    assert.is_truthy(out:find("\n%-"), "removed lines are prefixed with -")
-    assert.is_truthy(out:find("\n%+"), "added lines are prefixed with +")
-    -- The reference side must come from the retained text, not the buffer.
-    assert.is_truthy(out:find("%-  doThing%(%);"), "the un-indented `was` line appears")
-
+    assert.is_truthy(out:find("%+    doThing%(%);"), "buffer content appears verbatim")
     vim.api.nvim_buf_delete(buf, { force = true })
   end)
 
@@ -126,13 +137,114 @@ describe("preview building", function()
     vim.api.nvim_buf_delete(buf, { force = true })
   end)
 
+  describe("one-sided changes show one side", function()
+    local function sides(rendered)
+      local minus, plus = 0, 0
+      for _, l in ipairs(rendered) do
+        local c = l.text:sub(1, 1)
+        if c == "-" then minus = minus + 1 elseif c == "+" then plus = plus + 1 end
+      end
+      return minus, plus
+    end
+
+    it("shows only the reference side for a pure deletion", function()
+      -- `doThing(alpha, beta)` -> `doThing(alpha)`: all token detail is on the
+      -- lhs. The buffer line would render with no colour at all, so printing it
+      -- is dead weight.
+      local buf = buf_with({ "function f() {", "      doThing(alpha);", "}" })
+      local ref = { "function f() {", "  doThing(alpha, beta);", "}" }
+      local set = verdict.compute(
+        { { type = "change", added = { start = 2, count = 1 }, removed = { start = 2, count = 1 } } },
+        fixture("token_removed_reindent")
+      )
+      local rendered = preview._build(buf, { set.verdicts[1] }, ref)
+      local minus, plus = sides(rendered)
+      assert.are.equal(1, minus, "the removal must be shown")
+      assert.are.equal(0, plus, "the buffer side has nothing to say and must be omitted")
+      assert.is_truthy(rendered[1].text:find("deletions only"),
+        "header must explain the missing side: " .. rendered[1].text)
+      vim.api.nvim_buf_delete(buf, { force = true })
+    end)
+
+    it("shows only the buffer side for a pure addition", function()
+      local buf = buf_with({ "function f() {", "      doThing(alpha, gamma);", "}" })
+      local ref = { "function f() {", "  doThing(alpha);", "}" }
+      local set = verdict.compute(
+        { { type = "change", added = { start = 2, count = 1 }, removed = { start = 2, count = 1 } } },
+        fixture("token_added_reindent")
+      )
+      local rendered = preview._build(buf, { set.verdicts[1] }, ref)
+      local minus, plus = sides(rendered)
+      assert.are.equal(0, minus, "the reference side has nothing to say")
+      assert.are.equal(1, plus)
+      assert.is_truthy(rendered[1].text:find("additions only"), rendered[1].text)
+      vim.api.nvim_buf_delete(buf, { force = true })
+    end)
+
+    it("shows only the buffer side when a block is wrapped and reindented", function()
+      -- Semantically additive (a new `if` and `}`); the body only moved.
+      local buf = buf_with({
+        "function run() {", "  if (enabled) {", "    doThing();",
+        "    doOther();", "    return 1;", "  }", "}",
+      })
+      local ref = { "function run() {", "  doThing();", "  doOther();", "  return 1;", "}" }
+      local set = verdict.compute({
+        { type = "change", added = { start = 2, count = 5 }, removed = { start = 2, count = 3 } },
+      }, fixture("wrap_in_if"))
+      local minus, plus = sides(preview._build(buf, { set.verdicts[1] }, ref))
+      assert.are.equal(0, minus)
+      assert.are.equal(5, plus)
+      vim.api.nvim_buf_delete(buf, { force = true })
+    end)
+
+    it("shows BOTH sides when the change is genuinely two-sided", function()
+      local buf = buf_with({ "a", "b", "c", "d", "e", "  return x * 3;", "}" })
+      local ref = { "a", "b", "c", "d", "e", "  return x * 2;", "}" }
+      local set = verdict.compute({
+        { type = "change", added = { start = 6, count = 1 }, removed = { start = 6, count = 1 } },
+      }, fixture("single_token"))
+      local rendered = preview._build(buf, { set.verdicts[1] }, ref)
+      local minus, plus = sides(rendered)
+      assert.are.equal(1, minus, "a value change is visible on both sides")
+      assert.are.equal(1, plus)
+      assert.is_nil(rendered[1].text:find("only"), rendered[1].text)
+      vim.api.nvim_buf_delete(buf, { force = true })
+    end)
+
+    it("shows BOTH sides for a formatting-only hunk", function()
+      -- No tokens on either side, so there is no 'relevant part' to pick and the
+      -- reflow itself is the only thing worth looking at.
+      local buf = buf_with({ "const a = 1;", "const b = 2;" })
+      local ref = { "const a=1; const b=2;" }
+      local set = verdict.compute({
+        { type = "change", added = { start = 1, count = 2 }, removed = { start = 1, count = 1 } },
+      }, fixture("reformat_unchanged"))
+      local minus, plus = sides(preview._build(buf, { set.verdicts[1] }, ref))
+      assert.is_true(minus > 0, "the reflow must remain inspectable")
+      assert.is_true(plus > 0)
+      vim.api.nvim_buf_delete(buf, { force = true })
+    end)
+
+    it("does not claim a side was trimmed when there were no lines there", function()
+      -- A real `add` hunk removes nothing, so its one-sidedness is unremarkable.
+      local buf = buf_with({ "const brand = 1;", "const shiny = 2;" })
+      local set = verdict.compute(
+        { { type = "add", added = { start = 1, count = 2 }, removed = { start = 0, count = 0 } } },
+        fixture("created")
+      )
+      local header = preview._build(buf, { set.verdicts[1] }, nil)[1].text
+      assert.is_nil(header:find("only"), "nothing was suppressed: " .. header)
+      vim.api.nvim_buf_delete(buf, { force = true })
+    end)
+  end)
+
   it("colours tokens by direction: removed red, added green", function()
-    local buf = buf_with({ "function f() {", "      doThing(alpha);", "}" })
-    local ref = { "function f() {", "  doThing(alpha, beta);", "}" }
-    -- The cross-attribution case: `beta` removed while the line was reindented.
+    -- A two-sided value change, so both directions are present at once.
+    local buf = buf_with({ "a", "b", "c", "d", "e", "  return x * 3;", "}" })
+    local ref = { "a", "b", "c", "d", "e", "  return x * 2;", "}" }
     local set = verdict.compute(
-      { { type = "change", added = { start = 2, count = 1 }, removed = { start = 2, count = 1 } } },
-      fixture("token_removed_reindent")
+      { { type = "change", added = { start = 6, count = 1 }, removed = { start = 6, count = 1 } } },
+      fixture("single_token")
     )
     local rendered = preview._build(buf, { set.verdicts[1] }, ref)
 
@@ -142,16 +254,50 @@ describe("preview building", function()
       if l.text:sub(1, 1) == "+" then plus = l end
     end
 
-    -- The removal is visible only on the reference side, in the "removed" colour.
-    assert.are.equal("DifftSignsRemoved", minus.token_hl)
-    assert.is_true(#minus.tokens > 0, "the removed tokens must be marked")
-    assert.is_nil(minus.hl, "and the line itself must not be washed")
-
-    -- Nothing was ADDED on the buffer line, so it gets no token colour and no
-    -- wash -- but it is not dimmed either, because it is part of a real change.
-    assert.is_nil(plus.token_hl)
-    assert.is_nil(plus.hl, "a significant line with nothing added is left neutral, not dimmed")
+    assert.are.equal("DifftSignsRemoved", minus.token_hl, "the old token is red")
+    assert.are.equal("DifftSignsAdded", plus.token_hl, "the new token is green")
+    assert.is_true(#minus.tokens > 0 and #plus.tokens > 0)
+    -- And neither line is washed: the tokens carry the meaning.
+    assert.is_nil(minus.hl)
+    assert.is_nil(plus.hl)
+    assert.are.equal("DifftSignsRemoved", minus.prefix_hl)
     assert.are.equal("DifftSignsAdded", plus.prefix_hl)
+    vim.api.nvim_buf_delete(buf, { force = true })
+  end)
+
+  it("leaves a token-free significant line neutral, never dimmed", function()
+    -- The neutral state is reachable only inside a hunk whose buffer side DOES
+    -- carry tokens somewhere (otherwise that side is trimmed away entirely): here
+    -- line 2 gained a token, while line 3 is significant only by
+    -- cross-attribution from the reference side. Line 3 must be neither green
+    -- (nothing was added on it) nor dim (it is part of a real change).
+    local buf = buf_with({ "keep;", "  added_here;", "  untouched;" })
+    local set = verdict.compute(
+      { { type = "change", added = { start = 2, count = 2 }, removed = { start = 2, count = 2 } } },
+      {
+        status = "changed", fallback = false, all_significant = false,
+        changed_rhs = { [2] = true, [3] = true },
+        changed_lhs = { [3] = true },
+        edits = {
+          { side = "rhs", line = 2, content = "added_here", highlight = "normal", col_start = 2, col_end = 12 },
+          { side = "lhs", line = 3, content = "gone", highlight = "normal", col_start = 2, col_end = 6 },
+        },
+      }
+    )
+    local rendered = preview._build(buf, { set.verdicts[1] }, { "keep;", "added_here;", "gone;" })
+
+    local by_text = {}
+    for _, l in ipairs(rendered) do
+      by_text[l.text] = l
+    end
+    local neutral = by_text["+  untouched;"]
+    assert.is_not_nil(neutral, "the line must still be rendered")
+    assert.is_nil(neutral.token_hl, "no tokens on this side of this line")
+    assert.is_nil(neutral.hl, "significant with nothing added => neutral, not dimmed")
+    assert.are.equal("DifftSignsAdded", neutral.prefix_hl, "the marker still shows the side")
+
+    -- Sanity: the line that DID gain a token is token-coloured.
+    assert.are.equal("DifftSignsAdded", by_text["+  added_here;"].token_hl)
     vim.api.nvim_buf_delete(buf, { force = true })
   end)
 
