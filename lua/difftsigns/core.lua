@@ -9,7 +9,7 @@
 --- plus the token ranges behind them for the preview. Demoting difftastic from
 --- geometry provider to annotator is the entire point of iteration 2.
 ---
---- Empirically verified against Difftastic 0.69.0. Schema quirks that are easy
+--- Empirically verified against Difftastic 0.70.0. Schema quirks that are easy
 --- to get wrong (see REDESIGN §7):
 ---   * Line numbers are 0-BASED. Normalised to 1-based here, once.
 ---   * `unchanged` / `created` / `deleted` omit `chunks` (and `aligned_lines`)
@@ -48,7 +48,13 @@ local M = {}
 ---
 ---   "Text"                             -- no tree-sitter parser for this type
 ---   "Text (exceeded DFT_GRAPH_LIMIT)"  -- diff graph too large; gave up
----   "Text (exceeded DFT_BYTE_LIMIT)"   -- file too large; gave up
+---   "Text (13 B exceeded DFT_BYTE_LIMIT)"  -- file too large; gave up
+---   "Text (4 JavaScript parse errors, exceeded DFT_PARSE_ERROR_LIMIT, first at 3:0)"
+---
+--- Note that the parenthesised part is prose, not a fixed token: 0.70 added the
+--- error count and the position of the first parse error to it. Matching on the
+--- "exceeded DFT_*" substring rather than the whole string is what kept that
+--- change from being a breakage.
 ---
 --- An earlier version matched only the exact strings "Text"/"text", so the
 --- parenthesised limit forms slipped through and the plugin presented a LINE DIFF
@@ -68,6 +74,15 @@ local function classify_language(language)
   end
   if language:lower():find("exceeded dft_byte_limit", 1, true) then
     return true, "difftastic hit its byte limit (file too large)"
+  end
+  -- The one fallback cause that is normally the buffer's fault rather than a
+  -- limit: mid-edit code frequently does not parse, so say where it broke.
+  if language:lower():find("exceeded dft_parse_error_limit", 1, true) then
+    local at = language:match("first at ([%d:]+)")
+    if at ~= nil then
+      return true, ("difftastic could not parse this file (syntax error at %s)"):format(at)
+    end
+    return true, "difftastic could not parse this file"
   end
   if language:lower():find("exceeded", 1, true) then
     return true, "difftastic gave up: " .. language

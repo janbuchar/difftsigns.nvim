@@ -58,7 +58,7 @@ local function check_difft()
     error_("`difft --display json` failed", { "stderr: " .. tostring(probe.stderr) })
   end
 
-  info("difftastic 0.69 has no move detection: a reordered block reads as a real change.")
+  info("difftastic 0.70 has no move detection: a reordered block reads as a real change.")
 end
 
 local function check_gitsigns()

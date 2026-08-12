@@ -200,13 +200,31 @@ describe("core.parse", function()
         "Text",
         "text",
         "Text (exceeded DFT_GRAPH_LIMIT)",
-        "Text (exceeded DFT_BYTE_LIMIT)",
+        "Text (13 B exceeded DFT_BYTE_LIMIT)",
+        "Text (4 JavaScript parse errors, exceeded DFT_PARSE_ERROR_LIMIT, first at 3:0)",
         "Text (something new upstream)",
       }) do
         local r = core.parse({ language = lang, status = "changed", chunks = { {} } })
         assert.is_true(r.fallback, "must be treated as a fallback: " .. lang)
         assert.is_not_nil(r.fallback_reason, "must carry a reason: " .. lang)
       end
+    end)
+
+    -- 0.70 grew the parse-error label from a bare limit name into prose carrying
+    -- the error count and the position of the first one. The position is the only
+    -- fallback reason the user can act on directly, so it must survive into the
+    -- status line rather than being flattened into "difftastic gave up".
+    it("reports where the parse error is, real difft 0.70 output", function()
+      local r = core.parse({
+        language = "Text (4 JavaScript parse errors, exceeded DFT_PARSE_ERROR_LIMIT, first at 3:0)",
+        status = "changed",
+        chunks = { {} },
+      })
+      assert.is_true(r.fallback)
+      assert.is_truthy(r.fallback_reason:find("3:0", 1, true),
+        "the reason must locate the syntax error: " .. tostring(r.fallback_reason))
+      assert.is_nil(r.fallback_reason:find("DFT_", 1, true),
+        "and must say it in words, not by echoing difftastic's raw label")
     end)
 
     it("does not mistake a real language for a fallback", function()

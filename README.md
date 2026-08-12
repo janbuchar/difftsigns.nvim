@@ -29,7 +29,7 @@ model**. It changes the colour of things you were already looking at.
 - Neovim 0.11+
 - [gitsigns.nvim](https://github.com/lewis6991/gitsigns.nvim) — **required**, not
   optional (see [How it works](#how-it-works))
-- [difftastic](https://github.com/Wilfred/difftastic) `0.69.0` on `PATH`
+- [difftastic](https://github.com/Wilfred/difftastic) `0.70.0` on `PATH`
 
 ## Install
 
@@ -59,7 +59,7 @@ require("difftsigns").setup({
   preview_context = 2,
   graph_limit    = nil,           -- difft --graph-limit; nil = difft's default (3,000,000)
   language_overrides = {},        -- { ["*.foo"] = "javascript" }
-  difft_version_expected = "0.69.0",
+  difft_version_expected = "0.70.0",
   on_attach = function(bufnr) end,
 })
 ```
@@ -239,7 +239,7 @@ language, you get plain, unmodified gitsigns. Run `:DifftSigns status` or
 
 ## What it catches, and what it doesn't
 
-Verified against Difftastic 0.69.0:
+Verified against Difftastic 0.70.0:
 
 | Change | Result |
 |---|---|
@@ -253,7 +253,7 @@ Verified against Difftastic 0.69.0:
 | Reindent + value changed | line stays lit, changed token marked ✓ |
 | **Moved / reordered code** | **stays lit — see below** |
 
-**Moved code is not detected.** difftastic 0.69 has no move detection: a
+**Moved code is not detected.** difftastic 0.70 has no move detection: a
 reordered function is reported as a deletion plus an addition with every token
 changed. difftsigns therefore leaves it fully lit. That is the safe direction to
 fail — nothing real is ever hidden — but it does mean a reorder looks exactly as

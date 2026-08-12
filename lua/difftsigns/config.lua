@@ -80,7 +80,7 @@ M.defaults = {
 
   -- difftastic's JSON is explicitly unstable; the only honest way to cope is to
   -- fail loudly rather than silently mis-parse.
-  difft_version_expected = "0.69.0",
+  difft_version_expected = "0.70.0",
 
   on_attach = nil,
 }
