@@ -759,4 +759,66 @@ describe("preview window", function()
     vim.api.nvim_win_close(win, true)
     vim.api.nvim_buf_delete(buf, { force = true })
   end)
+
+  -- `zz`/`zt`/`zb` (and CTRL-E/Y) scroll the text without moving the cursor, so
+  -- no CursorMoved fires and the float stays open — it must stay attached to the
+  -- line it describes. The float's row was computed once from `screenpos` at
+  -- open, so it kept its window-relative row and drifted away from the hunk.
+  it("stays anchored to the hunk line when the window scrolls", function()
+    local overlay = require("difftsigns.overlay")
+    config.setup({})
+    local lines, ref = {}, {}
+    for i = 1, 60 do
+      lines[i], ref[i] = "const l" .. i .. " = " .. i .. ";", "const l" .. i .. " = " .. i .. ";"
+    end
+    lines[30], ref[30] = "  return x * 3;", "  return x * 2;"
+    local buf = buf_with(lines)
+    -- Height chosen so the window reaches the bottom of the (headless: 24-row)
+    -- screen: only then does `zb` leave the preview no room below the hunk.
+    local win = vim.api.nvim_open_win(buf, true, {
+      relative = "editor", row = 0, col = 0, width = 70, height = 22,
+    })
+    local set = verdict.compute({
+      { type = "change", added = { start = 30, count = 1 }, removed = { start = 30, count = 1 } },
+    }, fixture("single_token"))
+    overlay.apply(buf, set, {}, ref)
+
+    vim.api.nvim_win_set_cursor(win, { 30, 0 })
+    vim.cmd("normal! zt")
+    local float = preview.show(buf, win)
+    assert.is_not_nil(float)
+
+    -- Headless resolves a bufpos anchor one redraw late, and reads back the
+    -- pre-layout row on the first one. A real UI paints it correctly the first
+    -- time; only this readback needs the extra flush.
+    local function measure()
+      vim.cmd("redraw")
+      vim.cmd("redraw")
+      return vim.api.nvim_win_get_position(float)[1], vim.fn.screenpos(win, 30, 1).row
+    end
+
+    local float_row, line_row = measure()
+    vim.cmd("normal! zz")
+    local scrolled_float_row, scrolled_line_row = measure()
+
+    assert.is_true(vim.api.nvim_win_is_valid(float), "a scroll must not dismiss the preview")
+    assert.are_not.equal(line_row, scrolled_line_row, "zz must actually have scrolled")
+    assert.are.equal(float_row - line_row, scrolled_float_row - scrolled_line_row,
+      "the float must keep its offset from the hunk line across a scroll")
+
+    -- With the hunk on the last visible row there is no room below, and nvim
+    -- clamps rather than flips: the side has to be re-picked on the scroll, or
+    -- the float parks mid-window with a gap between it and the hunk.
+    assert.are.equal("NW", vim.api.nvim_win_get_config(float).anchor)
+    vim.cmd("normal! zb")
+    -- WinScrolled is dispatched from the main loop, which a script never reaches.
+    vim.api.nvim_exec_autocmds("WinScrolled", {})
+    assert.are.equal("SW", vim.api.nvim_win_get_config(float).anchor,
+      "with no room below, the float must flip above the hunk line")
+
+    vim.api.nvim_win_close(float, true)
+    overlay.forget(buf)
+    vim.api.nvim_win_close(win, true)
+    vim.api.nvim_buf_delete(buf, { force = true })
+  end)
 end)

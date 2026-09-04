@@ -432,26 +432,44 @@ function M.show(bufnr, winid)
     width = math.max(width, vim.fn.strdisplaywidth(t))
   end
 
-  -- Pin the float to the start of the text rather than the cursor column, so it
-  -- always lands in the same place regardless of where the cursor sits on the
-  -- line. `textoff` is the gutter width (number + sign + fold columns), so the
-  -- float clears them and the gutter stays visible. Vertically it tracks the
-  -- cursor's screen row (accounting for wrap/folds via screenpos), just below it.
-  local win_top = vim.api.nvim_win_get_position(winid)[1]
-  local cursor_screen = vim.fn.screenpos(winid, vim.api.nvim_win_get_cursor(winid)[1], 1)
-  local row = (cursor_screen.row > 0) and (cursor_screen.row - win_top) or 0
-  local gutter = vim.fn.getwininfo(winid)[1].textoff
-
+  -- Anchored to the hunk line in the buffer text (`bufpos`), not to a screen row
+  -- computed once at open: `zz`/`zt`/`zb` and CTRL-E/Y scroll the text without
+  -- moving the cursor, so no CursorMoved fires to dismiss the float and a fixed
+  -- window-relative row detaches it from the line it describes. bufpos also gets
+  -- wrap and folds right for free, and text column 0 already clears the gutter,
+  -- so the float lands in the same place whatever the cursor column.
+  --
   -- Widen by 2 for the sign column that carries the -/+ markers: `style=minimal`
   -- suppresses it by default, so we turn it back on below and must leave room.
   local SIGN_WIDTH = 2
+  local BORDER_ROWS = 2
+  local float_width = math.max(20, math.min(width + SIGN_WIDTH, math.floor(vim.o.columns * 0.85)))
+  local float_height = math.min(#texts, 24)
+
+  -- Below the hunk line, or above it when there is no room below: nvim clamps a
+  -- float that overflows the grid instead of flipping it, which parks the preview
+  -- mid-window with a gap between it and the hunk. `zb` on an open preview is
+  -- exactly that case, so the side is re-picked on scroll too.
+  --- @return "NW"|"SW" anchor, integer row
+  local function side()
+    local screen_row = vim.fn.screenpos(winid, cursor, 1).row
+    local room_below = (vim.o.lines - vim.o.cmdheight) - screen_row
+    if screen_row > 0 and room_below < float_height + BORDER_ROWS then
+      return "SW", 0
+    end
+    return "NW", 1
+  end
+
+  local anchor, row = side()
   local float = vim.api.nvim_open_win(buf, false, {
     relative = "win",
     win = winid,
-    row = row + 1,
-    col = gutter,
-    width = math.max(20, math.min(width + SIGN_WIDTH, math.floor(vim.o.columns * 0.85))),
-    height = math.min(#texts, 24),
+    bufpos = { cursor - 1, 0 },
+    anchor = anchor,
+    row = row,
+    col = 0,
+    width = float_width,
+    height = float_height,
     style = "minimal",
     border = "rounded",
     title = " difftsigns ",
@@ -496,6 +514,33 @@ function M.show(bufnr, winid)
       if cur[1] ~= anchor_pos[1] or cur[2] ~= anchor_pos[2] then
         dismiss()
         return true
+      end
+    end,
+  })
+
+  -- The line stays put under `bufpos`; which side of it has room does not.
+  vim.api.nvim_create_autocmd("WinScrolled", {
+    callback = function()
+      if not vim.api.nvim_win_is_valid(float) then
+        return true
+      end
+      if not vim.api.nvim_win_is_valid(winid) then
+        dismiss()
+        return true
+      end
+      local a, r = side()
+      if a ~= anchor then
+        anchor = a
+        vim.api.nvim_win_set_config(float, {
+          relative = "win",
+          win = winid,
+          bufpos = { cursor - 1, 0 },
+          anchor = a,
+          row = r,
+          col = 0,
+          width = float_width,
+          height = float_height,
+        })
       end
     end,
   })
