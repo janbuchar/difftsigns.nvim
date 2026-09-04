@@ -319,7 +319,7 @@ describe("preview building", function()
     vim.api.nvim_buf_delete(buf, { force = true })
   end)
 
-  it("falls back to a whole-line colour only when there is no token detail", function()
+  it("washes the whole line when difftastic supplied no tokens at all", function()
     -- Whole-file created: difftastic omits chunks entirely, so there are no
     -- tokens to point at and the line-level colour is the only thing we can say.
     local buf = buf_with({ "const brand = 1;", "const shiny = 2;" })
@@ -379,6 +379,54 @@ describe("preview building", function()
     local out = joined(preview._build(buf, { set.verdicts[1] }, was))
     assert.is_truthy(out:find("function other"), "deleted content comes from the reference text")
     assert.is_truthy(out:find("delete @@"), "header names the hunk type")
+    vim.api.nvim_buf_delete(buf, { force = true })
+  end)
+
+  it("washes wholly deleted lines instead of picking at their tokens", function()
+    -- difftastic reports every atom of a deleted line as a change, so the old
+    -- rendering shredded the line into red fragments separated by uncoloured
+    -- spaces. Nothing survives the deletion, so the line is the change.
+    local buf = buf_with({ "function greet(name: string) {", "  return 1;", "}", "" })
+    local was = {
+      "function greet(name: string) {", "  return 1;", "}", "",
+      "function other(x: number) {", "  return x * 2;", "}",
+    }
+    local set = verdict.compute({
+      { type = "delete", added = { start = 4, count = 0 }, removed = { start = 5, count = 3 } },
+    }, fixture("deletion"))
+
+    local rendered = preview._build(buf, { set.verdicts[1] }, was)
+    local minus = 0
+    for _, l in ipairs(rendered) do
+      if l.sign == "-" then
+        minus = minus + 1
+        assert.are.equal("DifftSignsRemovedBg", l.hl, "deleted line: " .. l.text)
+        assert.is_nil(l.token_hl, "no token shrapnel on a wholly deleted line")
+      end
+    end
+    assert.are.equal(3, minus, "all three deleted lines are shown")
+    vim.api.nvim_buf_delete(buf, { force = true })
+  end)
+
+  it("washes wholly added lines instead of picking at their tokens", function()
+    local buf = buf_with({
+      "function greet(name: string) {",
+      '  console.log("hello " + name);',
+      "  return name.length;",
+      "}",
+      "function other(x: number) {",
+      "  return x * 3;",
+      "}",
+    })
+    -- single_token puts a token on rhs line 6; the hunk removes nothing, so that
+    -- line arrived whole and the token detail inside it is not the story.
+    local set = verdict.compute({
+      { type = "add", added = { start = 6, count = 1 }, removed = { start = 5, count = 0 } },
+    }, fixture("single_token"))
+
+    local _, plus = marker_lines(preview._build(buf, { set.verdicts[1] }, {}))
+    assert.are.equal("DifftSignsAddedBg", plus.hl)
+    assert.is_nil(plus.token_hl)
     vim.api.nvim_buf_delete(buf, { force = true })
   end)
 

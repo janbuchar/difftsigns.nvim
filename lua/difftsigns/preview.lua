@@ -188,11 +188,13 @@ local function build(bufnr, group, ref)
   --- `-`/`+` marker in the sign column so sides stay scannable.
   ---
   --- Four cases, in order:
-  ---   1. tokens present     -> token backgrounds only, over syntax. The precise
-  ---                            answer.
-  ---   2. no detail at all   -> whole-line background wash, NO syntax. Only for
-  ---                            whole-file created/deleted, where difftastic omits
-  ---                            chunks and we know nothing more specific.
+  ---   1. whole line changed -> whole-line background wash, NO syntax. Either the
+  ---      line exists on one side of the hunk only (a pure deletion or addition:
+  ---      it went away or arrived entire, and marking the tokens inside it says
+  ---      nothing the -/+ marker did not), or difftastic supplied no chunks at
+  ---      all (whole-file created/deleted).
+  ---   2. tokens present     -> token backgrounds only, over syntax. The precise
+  ---      answer.
   ---   3. significant, but no tokens on THIS side -> syntax only, no wash. Happens
   ---      via cross-attribution: `doThing(alpha, beta)` -> `doThing(alpha)` is
   ---      real, but nothing was *added*, so the `+` line has no added token. A
@@ -207,18 +209,18 @@ local function build(bufnr, group, ref)
   --- @param dir_hl string       -- DifftSignsRemoved / DifftSignsAdded (the marker)
   --- @param toks table[]|nil    -- token edits on this line, this side
   --- @param significant boolean
-  --- @param no_detail boolean
-  local function push(prefix, text, dir_bg, dir_hl, toks, significant, no_detail)
+  --- @param whole_line boolean  -- the line itself, not a token in it, is the change
+  local function push(prefix, text, dir_bg, dir_hl, toks, significant, whole_line)
     local ranges, token_hl, line_hl = nil, nil, nil
 
-    if toks ~= nil and #toks > 0 then
+    if whole_line and significant then
+      line_hl = dir_bg
+    elseif toks ~= nil and #toks > 0 then
       ranges = {}
       for _, e in ipairs(toks) do
         ranges[#ranges + 1] = { from = e.col_start, to = e.col_end }
       end
       token_hl = dir_bg
-    elseif no_detail and significant then
-      line_hl = dir_bg
     elseif significant then
       -- syntax only; the marker carries the side
     else
@@ -240,13 +242,16 @@ local function build(bufnr, group, ref)
   if ref ~= nil and show_removed then
     for _, v in ipairs(group) do
       local r = v.hunk.removed
+      -- Nothing was added against these lines, so every token on them is gone by
+      -- definition: wash the line, like gitsigns would.
+      local whole_line = v.no_token_detail or v.hunk.added.count == 0
       for lnum = r.start, r.start + r.count - 1 do
         local src = ref[lnum]
         if src ~= nil then
           -- A removed line is judged by the REFERENCE side: it has no buffer line
           -- of its own to consult.
           push("-", src, "DifftSignsRemovedBg", "DifftSignsRemoved", by.lhs[lnum],
-            v.anchor_significant, v.no_token_detail)
+            v.anchor_significant, whole_line)
         end
       end
     end
@@ -261,7 +266,8 @@ local function build(bufnr, group, ref)
         local lnum = a.start + i - 1
         local owner = verdict_for_line[lnum] or v
         push("+", src, "DifftSignsAddedBg", "DifftSignsAdded", by.rhs[lnum],
-          verdict.is_significant(owner, lnum), owner.no_token_detail)
+          verdict.is_significant(owner, lnum),
+          owner.no_token_detail or owner.hunk.removed.count == 0)
       end
     end
   end
