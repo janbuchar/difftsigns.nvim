@@ -505,6 +505,75 @@ describe("preview across a split hunk", function()
   end)
 end)
 
+describe("preview of a multi-line block collapsed onto one line", function()
+  -- REGRESSION, from apify-sdk-js src/actor.ts: a six-line named import shrunk
+  -- to a one-liner. gitsigns' linematch splits that into `delete` + `change`, and
+  -- every judgement below was made per HUNK, so the delete hunk looked like a
+  -- wholesale deletion: four surviving lines were washed red (burying difft's
+  -- token detail, which said only the trailing commas and two names had gone),
+  -- the surviving line was suppressed as `deletions only`, and the header called
+  -- the whole thing formatting-only. Fixture and hunks are both captured from the
+  -- real thing, minimised.
+  local REF = {
+    "const before = 1;",
+    "import {",
+    "    Alpha,",
+    "    Beta,",
+    "    Gamma,",
+    "} from './x.js';",
+    "",
+    "export const value = Alpha;",
+  }
+  local BUF = {
+    "const before = 1;",
+    "import { Alpha } from './x.js';",
+    "",
+    "export const value = Alpha;",
+  }
+
+  local function rendered()
+    config.setup({})
+    local buf = buf_with(BUF)
+    local set = verdict.compute({
+      { type = "delete", added = { start = 1, count = 0 }, removed = { start = 2, count = 4 } },
+      { type = "change", added = { start = 2, count = 1 }, removed = { start = 6, count = 1 } },
+    }, fixture("import_collapse"))
+    local group = verdict.group_at_line(set, 2)
+    assert.are.equal(2, #group, "the split run must be previewed as one")
+    local out = preview._build(buf, group, REF)
+    vim.api.nvim_buf_delete(buf, { force = true })
+    return out
+  end
+
+  it("marks only the tokens that went away, not the lines that survived", function()
+    local bt = by_text(rendered())
+
+    local kept = bt["    Alpha,"]
+    assert.is_nil(kept.hl, "`Alpha` survives on the new line and must not be washed away")
+    assert.are.equal("DifftSignsRemovedBg", kept.token_hl)
+    assert.are.equal(1, #kept.tokens, "only the trailing comma went")
+    assert.are.equal(",", ("    Alpha,"):sub(kept.tokens[1].from + 1, kept.tokens[1].to))
+
+    -- The genuinely deleted names keep their token marks, whole-line wash or not.
+    assert.are.equal("DifftSignsRemovedBg", bt["    Beta,"].token_hl)
+    assert.is_nil(bt["    Beta,"].hl)
+  end)
+
+  it("shows the resulting line rather than trimming it away", function()
+    local out = rendered()
+    assert.is_nil(out[1].text:find("deletions only"),
+      "the collapsed result is not reconstructable from the removed side: " .. out[1].text)
+    assert.is_not_nil(by_text(out)["import { Alpha } from './x.js';"],
+      "the line the block collapsed onto must be visible")
+  end)
+
+  it("does not call a real deletion formatting-only", function()
+    local header = rendered()[1].text
+    assert.is_nil(header:find("formatting only"),
+      "two names were deleted; only the buffer-side line count said otherwise: " .. header)
+  end)
+end)
+
 describe("preview highlight priorities", function()
   -- REGRESSION. nvim_buf_set_extmark defaults priority to 4096. The whole-line
   -- highlight was placed without a priority (4096) and the token highlight with

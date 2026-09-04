@@ -84,32 +84,19 @@ local function build(bufnr, group, ref)
   local out = {}
   local by = edits_by_side(group)
 
-  -- ONE-SIDED CHANGES SHOW ONE SIDE.
-  --
-  -- If every token difftastic reported lives on one side, the other side has
-  -- nothing to say and printing it is pure dead weight — you get a column of
-  -- lines with no colour on them, and have to work out for yourself that none of
-  -- them is the point. Observed in crawlee: adding an argument rendered the old
-  -- line in full underneath, entirely uncoloured, purely to be ignored.
-  --
-  -- Note this is decided by TOKEN DETAIL, not by line counts: gitsigns calls a
-  -- hunk a `change` whenever both sides have lines, but a change can be
-  -- semantically pure-addition (a wrapped block, an added argument) or
-  -- pure-deletion (a removed argument) with the opposite side merely reindented.
-  --
-  -- When NEITHER side has tokens the hunk is formatting-only, and then both sides
-  -- ARE the information — that is the one case where seeing the reflow matters.
-  local has_lhs = next(by.lhs) ~= nil
-  local has_rhs = next(by.rhs) ~= nil
-  local show_removed = has_lhs or not has_rhs
-  local show_added = has_rhs or not has_lhs
-
   -- Aggregate the group into one unified-diff-style range, and one verdict
   -- lookup per buffer line.
   local summary_sig, summary_noise = 0, 0
   local rem_start, rem_count, add_start, add_count = nil, 0, nil, 0
   local kinds, seen_kind = {}, {}
   local verdict_for_line = {}
+
+  -- Does anything real happen in this group at all? The counters below see only
+  -- BUFFER lines, so a merged `delete` hunk — which adds none — contributes
+  -- nothing to them however much it removed. Without this, the group that
+  -- collapsed six import lines onto one was headed "formatting only — no
+  -- structural change" while four of those lines were genuine deletions.
+  local any_real = false
 
   -- A zero-count side reports an insertion *point*, not a real line: an `add`
   -- hunk's `removed.start` is "the line after which this was inserted". Letting
@@ -137,10 +124,14 @@ local function build(bufnr, group, ref)
       seen_kind[v.hunk.type] = true
       kinds[#kinds + 1] = v.hunk.type
     end
+    if v.anchor_significant then
+      any_real = true
+    end
     for lnum, sig in pairs(v.lines) do
       verdict_for_line[lnum] = v
       if sig then
         summary_sig = summary_sig + 1
+        any_real = true
       else
         summary_noise = summary_noise + 1
       end
@@ -152,6 +143,33 @@ local function build(bufnr, group, ref)
     rem_start or rem_anchor or 0, rem_count,
     add_start or add_anchor or 0, add_count
   )
+
+  -- ONE-SIDED CHANGES SHOW ONE SIDE.
+  --
+  -- If every token difftastic reported lives on one side, the other side has
+  -- nothing to say and printing it is pure dead weight — you get a column of
+  -- lines with no colour on them, and have to work out for yourself that none of
+  -- them is the point. Observed in crawlee: adding an argument rendered the old
+  -- line in full underneath, entirely uncoloured, purely to be ignored.
+  --
+  -- Note this is decided by TOKEN DETAIL, not by line counts: gitsigns calls a
+  -- hunk a `change` whenever both sides have lines, but a change can be
+  -- semantically pure-addition (a wrapped block, an added argument) or
+  -- pure-deletion (a removed argument) with the opposite side merely reindented.
+  --
+  -- When NEITHER side has tokens the hunk is formatting-only, and then both sides
+  -- ARE the information — that is the one case where seeing the reflow matters.
+  --
+  -- The exception is the added side, the only place the RESULTING code appears.
+  -- Dropping it is legible when the sides correspond line for line, since the
+  -- result then reads as "the shown line minus the red tokens". When the counts
+  -- differ, the shape itself changed and that subtraction is not available: six
+  -- import lines collapsing onto one rendered as `deletions only`, so a name that
+  -- survived on the unprinted new line read as deleted.
+  local has_lhs = next(by.lhs) ~= nil
+  local has_rhs = next(by.rhs) ~= nil
+  local show_removed = has_lhs or not has_rhs
+  local show_added = has_rhs or not has_lhs or rem_count ~= add_count
 
   -- Say so when a side is suppressed, but only when its absence would be
   -- surprising — i.e. the hunk really does have lines there and we chose not to
@@ -171,7 +189,7 @@ local function build(bufnr, group, ref)
   if summary_noise > 0 and summary_sig > 0 then
     header = ("%s %s%s%s  %d real, %d formatting-only")
       :format(kind, range, merged, trimmed, summary_sig, summary_noise)
-  elseif summary_noise > 0 and summary_sig == 0 then
+  elseif summary_noise > 0 and not any_real then
     header = ("%s %s%s%s  formatting only — no structural change")
       :format(kind, range, merged, trimmed)
   else
@@ -189,10 +207,17 @@ local function build(bufnr, group, ref)
   ---
   --- Four cases, in order:
   ---   1. whole line changed -> whole-line background wash, NO syntax. Either the
-  ---      line exists on one side of the hunk only (a pure deletion or addition:
+  ---      line exists on one side of the GROUP only (a pure deletion or addition:
   ---      it went away or arrived entire, and marking the tokens inside it says
   ---      nothing the -/+ marker did not), or difftastic supplied no chunks at
   ---      all (whole-file created/deleted).
+  ---
+  ---      GROUP, not hunk: with `linematch` gitsigns splits one logical edit into
+  ---      adjacent hunks, so a hunk can read as one-sided while the run it belongs
+  ---      to has lines on both sides. Judged per hunk, four surviving import lines
+  ---      were washed red because the single line replacing them had been split
+  ---      into a hunk of its own — burying the token detail this preview exists
+  ---      to show under a wash that said "all of this is gone".
   ---   2. tokens present     -> token backgrounds only, over syntax. The precise
   ---      answer.
   ---   3. significant, but no tokens on THIS side -> syntax only, no wash. Happens
@@ -244,7 +269,7 @@ local function build(bufnr, group, ref)
       local r = v.hunk.removed
       -- Nothing was added against these lines, so every token on them is gone by
       -- definition: wash the line, like gitsigns would.
-      local whole_line = v.no_token_detail or v.hunk.added.count == 0
+      local whole_line = v.no_token_detail or add_count == 0
       for lnum = r.start, r.start + r.count - 1 do
         local src = ref[lnum]
         if src ~= nil then
@@ -267,7 +292,7 @@ local function build(bufnr, group, ref)
         local owner = verdict_for_line[lnum] or v
         push("+", src, "DifftSignsAddedBg", "DifftSignsAdded", by.rhs[lnum],
           verdict.is_significant(owner, lnum),
-          owner.no_token_detail or owner.hunk.removed.count == 0)
+          owner.no_token_detail or rem_count == 0)
       end
     end
   end

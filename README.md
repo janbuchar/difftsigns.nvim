@@ -141,15 +141,18 @@ git:                                    difftsigns:
 (The `+` sits in the sign column; the source keeps its syntax colours.)
 
 A formatting-only hunk keeps both sides — there's no relevant part to pick, and
-seeing the reflow is the point.
+seeing the reflow is the point. So does a hunk whose sides differ in line count
+with all the tokens on the removed side: the added side is the only place the
+result appears, and "the old line minus the red tokens" stops being readable once
+six import lines collapse onto one.
 
 **Only the changed tokens are washed, not the whole line** — a green background
 for added, red for removed, over the syntax-highlighted source. Once difftastic
 has told us precisely which tokens changed, a whole-line wash is worse than
 redundant: it competes with the token highlight for attention. Lines that were
-only reformatted stay dimmed, matching the gutter. A whole-line wash appears in
-exactly one case: a brand-new or deleted file, where difftastic supplies no token
-detail and the line is all we can honestly colour.
+only reformatted stay dimmed, matching the gutter. A whole-line wash is left for
+the cases with no tokens to prefer: a brand-new or deleted file, and lines that
+exist on one side of the contiguous run only.
 
 It previews the whole **contiguous run** of hunks, not one hunk. gitsigns computes
 hunks at zero context and (with `diff_opts.linematch`) can split a single logical
@@ -280,7 +283,7 @@ noisy as it does today.
 make test
 ```
 
-106 tests: fixture-driven parsing (every fixture is captured real difft output),
+118 tests: fixture-driven parsing (every fixture is captured real difft output),
 the pure verdict join, on-screen gutter assertions via `screenstring`, and
 end-to-end tests against a real git repo, real gitsigns, and the real difft
 binary.
