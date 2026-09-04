@@ -235,10 +235,8 @@ describe("core.parse", function()
     end)
 
     it("catches a line diff by SHAPE even if the language looks legitimate", function()
-      -- Belt and braces, independent of the unstable language string: a genuine
-      -- structural diff never reports whitespace as a changed token (verified
-      -- across every fixture, including a 46-edit reorder). So whitespace edits
-      -- mean a line diff, whatever the label claims.
+      -- Belt and braces, independent of the unstable language string: a line
+      -- diff marks every token on the line, spaces included, as `normal`.
       local r = core.parse({
         language = "TypeScript",
         status = "changed",
@@ -250,6 +248,33 @@ describe("core.parse", function()
       })
       assert.is_true(r.fallback, "whitespace-as-a-change betrays a line diff")
       assert.is_truthy(r.fallback_reason:find("line diff"))
+    end)
+
+    it("does not trip the shape check on a reworded comment, real difft 0.70 output", function()
+      -- REGRESSION. difftastic word-diffs the INSIDE of a comment atom, so its
+      -- inter-word spaces arrive as changed tokens (42 of them here) in output
+      -- that is otherwise a perfectly good TypeScript structural diff. The shape
+      -- check read those as a line diff and the plugin went inert on every file
+      -- with a reflowed doc comment.
+      local r = fixture("comment_reword")
+      assert.is_false(r.fallback, tostring(r.fallback_reason))
+      -- The comment spans lines 1-5; line 7 lost an argument to `lookup`.
+      assert.are.same({ 1, 2, 3, 4, 5, 7 }, keys(r.changed_rhs))
+    end)
+
+    it("still catches a line diff whose whitespace sits outside a word-diffed atom", function()
+      for _, hl in ipairs({ "normal", "keyword", "type", "delimiter" }) do
+        local r = core.parse({
+          language = "TypeScript",
+          status = "changed",
+          chunks = { { {
+            lhs = { line_number = 0, changes = {
+              { start = 0, ["end"] = 1, content = " ", highlight = hl },
+            } },
+          } } },
+        })
+        assert.is_true(r.fallback, "whitespace as a " .. hl .. " token betrays a line diff")
+      end
     end)
 
     it("does not trip the shape check on genuine structural output", function()

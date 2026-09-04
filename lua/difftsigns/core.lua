@@ -118,6 +118,12 @@ local function empty_result(language, status)
   }
 end
 
+--- Highlight classes whose atoms difftastic word-diffs INTERNALLY. Rewording a
+--- doc comment or a string literal reports the atom's inter-word spaces as
+--- changed tokens, so whitespace in one of these is genuine structural output.
+--- Verified against 0.70.0; used by the shape check in `M.parse`.
+local WORD_DIFFED_ATOMS = { comment = true, string = true }
+
 --- Parse one decoded difftastic file object into a DiffResult.
 ---
 --- Pure: no Neovim API, no IO, no subprocess. Feed it `vim.json.decode(fixture)`
@@ -169,22 +175,17 @@ function M.parse(decoded)
     end
   end
 
-  -- SAFETY NET, independent of the `language` string.
+  -- SAFETY NET, independent of the `language` string, which belongs to an
+  -- explicitly unstable schema and has already changed shape once under us.
   --
-  -- The language field is our authoritative fallback signal, but it is also part
-  -- of an explicitly unstable schema and has already changed shape once under us.
-  -- So we additionally check the SHAPE of the output: a genuine structural diff
-  -- never reports whitespace as a changed token. Verified across every captured
-  -- fixture, including a 46-edit function reorder — zero whitespace-only edits.
-  -- A line-diff fallback, by contrast, marks every token on the line: the
-  -- observed graph-limit fallback reported 604 changes of which 323 were single
-  -- space characters.
-  --
-  -- So a whitespace-only "change" means we are looking at a line diff wearing a
-  -- language label, whatever that label happens to say.
+  -- A line-diff fallback marks every token on the line, spaces included, and
+  -- labels them all `normal`: the captured graph-limit fallback is 1112 changes,
+  -- all `normal`, 538 of them single spaces. Whitespace inside a word-diffed atom
+  -- is not that — see `WORD_DIFFED_ATOMS`. Testing for whitespace alone, as an
+  -- earlier version did, stood down on any file carrying a reworded comment.
   if not result.fallback then
     for _, e in ipairs(result.edits) do
-      if e.content ~= "" and e.content:match("^%s+$") ~= nil then
+      if e.content:match("^%s+$") ~= nil and not WORD_DIFFED_ATOMS[e.highlight] then
         result.fallback = true
         result.fallback_reason =
           "difftastic returned a line diff, not a structural one (whitespace reported as changed)"
