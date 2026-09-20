@@ -47,7 +47,6 @@ describe("verdict.compute", function()
       for lnum = 1, 8 do
         assert.is_false(cls[lnum], "line " .. lnum .. " should be noise")
       end
-      assert.is_false(set.verdicts[1].significant)
       assert.are.equal(8, verdict.summary(set).noise)
     end)
 
@@ -68,7 +67,6 @@ describe("verdict.compute", function()
       assert.is_false(cls[3], "reindented body line 3 must dim")
       assert.is_false(cls[4], "reindented body line 4 must dim")
       assert.is_false(cls[5], "reindented body line 5 must dim")
-      assert.is_true(set.verdicts[1].significant, "hunk rolls up as significant")
       assert.are.same({ significant = 2, noise = 3, hunks = 1 }, verdict.summary(set))
     end)
   end)
@@ -95,8 +93,11 @@ describe("verdict.compute", function()
       -- than being wrongly dimmed. Safe direction of failure.
       local d = fixture("reorder")
       local set = verdict.compute({ hunk("add", 4, 4, 3, 0), hunk("delete", 3, 0, 1, 4) }, d)
-      assert.is_true(set.verdicts[1].significant)
-      assert.is_true(set.verdicts[2].significant)
+      local cls = classify(set)
+      for lnum = 4, 7 do
+        assert.is_true(cls[lnum], "moved-in line " .. lnum .. " stays lit")
+      end
+      assert.is_true(verdict.is_significant(set.verdicts[2], 3), "moved-out marker stays lit")
     end)
   end)
 
@@ -112,7 +113,6 @@ describe("verdict.compute", function()
       local v = set.verdicts[1]
       assert.is_true(verdict.is_significant(v, 2),
         "a line with a removed token must stay lit, not be dimmed as reflow")
-      assert.is_true(v.significant)
       assert.are.equal(0, verdict.summary(set).noise)
     end)
 
@@ -236,7 +236,6 @@ describe("verdict.compute", function()
       local set = verdict.compute({ h }, d)
       local v = set.verdicts[1]
       assert.is_true(v.anchor_significant, "a real deletion is significant")
-      assert.is_true(v.significant)
       -- The marker sits on an untouched buffer line, so resolution must fall
       -- through to the anchor rather than returning nil/false.
       assert.is_true(verdict.is_significant(v, 4), "delete marker on line 4")
@@ -253,7 +252,6 @@ describe("verdict.compute", function()
       local set = verdict.compute({ hunk("delete", 10, 0, 11, 2) }, d)
       local v = set.verdicts[1]
       assert.is_false(v.anchor_significant)
-      assert.is_false(v.significant)
       assert.is_false(verdict.is_significant(v, 10))
     end)
 
@@ -273,7 +271,6 @@ describe("verdict.compute", function()
       assert.are.equal(6, v.delete_marker_line, "marker on the last changed line")
       assert.is_false(verdict.is_significant(v, 5), "reflowed line dims")
       assert.is_true(verdict.is_significant(v, 6), "deletion marker stays lit")
-      assert.is_true(v.significant)
     end)
 
     it("dims a changedelete marker when nothing real was removed", function()
@@ -284,7 +281,6 @@ describe("verdict.compute", function()
       local set = verdict.compute({ hunk("change", 5, 2, 5, 3) }, d)
       local v = set.verdicts[1]
       assert.is_false(verdict.is_significant(v, 6))
-      assert.is_false(v.significant)
     end)
   end)
 

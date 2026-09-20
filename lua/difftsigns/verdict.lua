@@ -11,7 +11,6 @@ local M = {}
 
 --- @class DifftSigns.Verdict
 --- @field hunk               table    -- gitsigns' hunk, PASSED THROUGH UNMODIFIED
---- @field significant        boolean  -- rollup: does anything real happen in this hunk?
 --- @field lines              table<integer, boolean>  -- buffer line -> significant?
 --- @field anchor_significant boolean  -- verdict for reference-only (deleted) content
 --- @field delete_marker_line integer|nil  -- buffer line carrying deletion semantics
@@ -72,12 +71,9 @@ function M.compute(hunks, diff)
     if type(added) == "table" and type(removed) == "table" then
       local lines = {}
       local edits = {}
-      local significant = false
 
       for lnum = added.start, added.start + added.count - 1 do
-        local sig = all or changed_rhs[lnum] == true
-        lines[lnum] = sig
-        significant = significant or sig
+        lines[lnum] = all or changed_rhs[lnum] == true
         for _, e in ipairs(edits_by_side.rhs[lnum] or {}) do
           table.insert(edits, e)
         end
@@ -95,10 +91,6 @@ function M.compute(hunks, diff)
         end
       end
 
-      if added.count == 0 then
-        significant = significant or anchor_significant
-      end
-
       -- gitsigns draws `changedelete` on the LAST changed line of a hunk that
       -- removed more than it added. That cell carries deletion semantics on top
       -- of its own line's verdict, so it must stay lit when the deletion was
@@ -106,12 +98,10 @@ function M.compute(hunks, diff)
       local delete_marker_line = nil
       if added.count > 0 and removed.count > added.count then
         delete_marker_line = change_end(hunk)
-        significant = significant or anchor_significant
       end
 
       verdicts[#verdicts + 1] = {
         hunk = hunk,
-        significant = significant,
         lines = lines,
         anchor_significant = anchor_significant,
         delete_marker_line = delete_marker_line,
