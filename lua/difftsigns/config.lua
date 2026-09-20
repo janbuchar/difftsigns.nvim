@@ -1,14 +1,5 @@
---- config.lua
----
---- Defaults + validation. The config is the public contract, so validation is
---- loud: a typo'd key or wrong type fails at setup() time rather than three
---- debounce ticks later inside an async callback.
----
---- Note how small this is compared with the PoC's. There are no layers, no sign
---- glyph definitions, no compare_base, and no version-pinned reference
---- resolution — because geometry, base, and glyphs are all borrowed from
---- gitsigns now (REDESIGN §4). A shrinking config surface is the clearest
---- evidence the redesign moved responsibility to the right place.
+--- Defaults + validation. Validation is loud: a typo'd key or wrong type fails
+--- at setup() rather than later inside an async callback.
 
 local M = {}
 
@@ -28,25 +19,16 @@ local M = {}
 M.defaults = {
   difft_cmd = "difft",
 
-  -- DERIVED, not asserted. Measured with Difftastic 0.69.0: a realistic
-  -- single-token edit costs ~41 ms on a 1145-line TypeScript file and
-  -- ~200-330 ms on a 6045-line one. 400 ms keeps the common case imperceptible
-  -- while leaving even a large-file worst case settled well inside a second of
-  -- pausing. The PoC's 1500 ms default was ~4x more pessimistic than reality.
+  -- Measured with Difftastic 0.69.0: a single-token edit costs ~41 ms on a
+  -- 1145-line TypeScript file and ~200-330 ms on a 6045-line one.
   debounce_ms = 400,
 
-  -- Matches difftastic's own --byte-limit. Past it difft silently degrades to a
-  -- line diff, which we must never present as a structural verdict, so we stop
-  -- asking rather than mislabel the answer.
+  -- Matches difftastic's own --byte-limit; past it difft degrades to a line
+  -- diff, which we must never present as a structural verdict.
   max_filesize = 1024 * 1024,
 
-  -- Passed to difftastic as --graph-limit. nil leaves difftastic's own default
-  -- (3,000,000) alone.
-  --
-  -- This is the knob for "why does the plugin do nothing on this file". difftastic
-  -- abandons the structural diff when its internal graph exceeds this many
-  -- vertices and returns a line diff, which we refuse to render. Measured on a
-  -- 708-line TypeScript test file with ~50 changed lines:
+  -- nil leaves difftastic's default (3,000,000) alone. Measured on a 708-line
+  -- TypeScript file with ~50 changed lines:
   --
   --     limit        outcome                    time
   --     100,000      gave up                    0.4 s
@@ -54,29 +36,21 @@ M.defaults = {
   --     3,000,000    gave up (difft default)    7.9 s
   --     5,000,000    STRUCTURAL DIFF            7.7 s
   --
-  -- Note the shape of that table: at the default, difftastic spends eight seconds
-  -- and then tells you nothing. Raising the limit buys real answers on
-  -- heavily-changed files at no extra cost over failing slowly; LOWERING it makes
-  -- hopeless cases fail fast and cheap. Both are defensible, which is why this is
-  -- a knob and not a decision baked in on your behalf.
+  -- Raising it buys answers on heavily-changed files; lowering it makes hopeless
+  -- cases fail fast. Both are defensible, hence a knob.
   graph_limit = nil,
 
-  -- The entire visual design of the plugin is this one highlight group.
   noise_hl = "DifftSignsNoise",
 
-  -- nil means "mirror gitsigns' own glyph for that sign type", so only the
-  -- colour of the cell changes and a dimmed hunk still reads as the same KIND of
-  -- change. Set a string to use one distinct glyph for all noise instead.
+  -- nil mirrors gitsigns' glyph per sign type, so only the colour changes and a
+  -- dimmed hunk still reads as the same kind of change.
   noise_text = nil,
 
-  -- We must outrank gitsigns to win the shared cell, but stay below diagnostics
-  -- (conventionally 10+). gitsigns defaults to 6, so +1 lands at 7.
+  -- Must outrank gitsigns (default 6) but stay below diagnostics (10+).
   priority_offset = 1,
 
   language_overrides = {},
 
-  -- difftastic's JSON is explicitly unstable; the only honest way to cope is to
-  -- fail loudly rather than silently mis-parse.
   difft_version_expected = "0.70.0",
 
   on_attach = nil,
@@ -85,7 +59,6 @@ M.defaults = {
 --- @type DifftSigns.Config
 M.values = vim.deepcopy(M.defaults)
 
---- Validate a merged config. Uses the modern per-field vim.validate signature.
 --- @param cfg table
 --- @return boolean ok
 --- @return string|nil err
@@ -111,9 +84,7 @@ local function validate(cfg)
     if cfg.graph_limit ~= nil and cfg.graph_limit < 1 then
       error("graph_limit must be >= 1")
     end
-    -- A non-positive offset would tie or lose against gitsigns, and extmark
-    -- tie-breaking is not something to leave to chance: the overlay would
-    -- appear or not depending on placement order.
+    -- A tie with gitsigns would leave the winning cell to extmark placement order.
     if cfg.priority_offset < 1 then
       error("priority_offset must be >= 1 so the overlay outranks gitsigns")
     end
@@ -131,8 +102,6 @@ local function validate(cfg)
   return true, nil
 end
 
---- Reject unknown keys outright. A silently-ignored typo in a config table is
---- among the most annoying bugs a plugin can inflict.
 --- @param opts table
 --- @return boolean ok
 --- @return string|nil err

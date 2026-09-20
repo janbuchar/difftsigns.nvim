@@ -1,33 +1,21 @@
---- gitsigns.lua
+--- The gitsigns boundary: the only file that knows gitsigns exists.
 ---
---- The gitsigns quarantine boundary (REDESIGN §4). This is the ONLY file in the
---- plugin that knows gitsigns exists. Everything above it speaks Verdicts.
+--- We BORROW geometry rather than compute it. Taking hunks and reference text
+--- from the same source makes a one-line drift between our verdict and
+--- gitsigns' signs structurally impossible. The price is coupling to internals:
 ---
---- We deliberately BORROW geometry rather than compute it. Resolving the git
---- reference ourselves and running our own `vim.diff` would decouple us, but it
---- would trade a *breakage* class for a *correctness* class — and correctness is
---- worse. If our hunk boundaries drifted from gitsigns' by one line, we would
---- silently mislabel which change matters, in a plugin whose entire purpose is
---- labelling which change matters. Taking the hunks and the reference text from
---- the same source makes that misalignment structurally impossible.
----
---- The price is coupling, some of it to internals:
----
----   * `require("gitsigns").get_hunks(bufnr)`     -- PUBLIC, documented
+---   * `require("gitsigns").get_hunks(bufnr)`     -- PUBLIC
 ---   * `require("gitsigns.cache").cache[bufnr]`   -- INTERNAL: compare_text, hunks, git_obj
----   * `require("gitsigns.hunks").calc_signs(..)` -- INTERNAL, but a PURE function
+---   * `require("gitsigns.hunks").calc_signs(..)` -- INTERNAL, but pure
 ---   * `require("gitsigns.config").config`        -- semi-public: signs, sign_priority
 ---
---- Mitigation is uniform: every access is wrapped, and any missing piece makes
---- us report unavailable. We go INERT, never wrong (REDESIGN R6) — the user then
---- simply has plain gitsigns, which is a harmless outcome.
+--- Every access is wrapped; any missing piece makes us report unavailable and
+--- the user is left with plain gitsigns.
 ---
---- On borrowing `calc_signs` rather than reimplementing it: mapping hunks to
---- per-line sign types (`add`/`change`/`delete`/`topdelete`/`changedelete`/
---- `untracked`) is genuinely fiddly, has two code paths behind a feature flag,
---- and must match gitsigns EXACTLY or our override lands on the wrong cell or
---- with the wrong glyph. Reimplementing it would be a slow-motion bug. It is a
---- pure function of hunks; borrowing it is the lowest-risk option available.
+--- `calc_signs` is borrowed rather than reimplemented because hunk -> sign type
+--- (`add`/`change`/`delete`/`topdelete`/`changedelete`/`untracked`) has two code
+--- paths behind a feature flag and must match gitsigns exactly or our override
+--- lands on the wrong cell.
 
 local M = {}
 
@@ -41,7 +29,6 @@ local function try_require(mod)
   return m
 end
 
---- Is gitsigns present and functional enough to annotate?
 --- @return boolean
 --- @return string|nil reason  -- populated when unavailable, for :checkhealth
 function M.available()
@@ -58,7 +45,6 @@ function M.available()
   return true, nil
 end
 
---- The gitsigns cache entry for a buffer, or nil.
 --- @param bufnr integer
 --- @return table|nil
 local function cache_entry(bufnr)
@@ -69,7 +55,6 @@ local function cache_entry(bufnr)
   return c.cache[bufnr]
 end
 
---- gitsigns' config table, or nil.
 --- @return table|nil
 local function gs_config()
   local c = try_require("gitsigns.config")
@@ -79,18 +64,14 @@ local function gs_config()
   return c.config
 end
 
---- Is gitsigns attached to this buffer?
 --- @param bufnr integer
 --- @return boolean
 function M.attached(bufnr)
   return cache_entry(bufnr) ~= nil
 end
 
---- The reference text gitsigns is diffing this buffer against.
----
---- Taking this rather than resolving `git show` ourselves is what guarantees
---- difftastic and gitsigns are looking at the same "before". It also means we
---- follow gitsigns' base automatically, including after its `change_base`.
+--- The reference text gitsigns is diffing this buffer against, so difftastic
+--- and gitsigns see the same "before" (including after `change_base`).
 --- @param bufnr integer
 --- @return string[]|nil
 function M.reference_text(bufnr)
@@ -105,13 +86,11 @@ function M.reference_text(bufnr)
   return text
 end
 
---- The unstaged hunks gitsigns computed for this buffer. Taken from the cache
---- rather than the public `get_hunks`: same list, but the cache's carry `vend`,
---- which `calc_signs` needs.
+--- Unstaged hunks, from the cache rather than the public `get_hunks`: same
+--- list, but the cache's carry `vend`, which `calc_signs` needs.
 ---
---- Staged hunks are deliberately NOT handled: gitsigns diffs those against a
---- different base (`compare_text_head`), so judging them would require a second
---- difftastic run against a second reference. Documented limitation.
+--- Staged hunks are not handled: gitsigns diffs those against a different base
+--- (`compare_text_head`), which would need a second difftastic run.
 --- @param bufnr integer
 --- @return table[]|nil
 function M.hunks(bufnr)
@@ -124,11 +103,8 @@ end
 
 --- Every sign gitsigns would place in this buffer, with the hunk each came from.
 ---
---- Computed for the WHOLE buffer (1..huge) rather than a viewport. gitsigns
---- itself places signs lazily per window from a decoration provider, so reading
---- its placed extmarks would only ever reveal the visible ones — and would make
---- us depend on decoration-provider ordering. Asking `calc_signs` directly for
---- the full range avoids both problems.
+--- Computed for the WHOLE buffer: gitsigns places signs lazily per window from
+--- a decoration provider, so its placed extmarks only cover the visible range.
 ---
 --- @param bufnr integer
 --- @return { lnum: integer, type: string, count: integer|nil, hunk_index: integer }[]|nil
@@ -144,9 +120,8 @@ function M.signs_for(bufnr)
     return nil, nil
   end
 
-  -- gitsigns renders an untracked file's hunks with the `untracked` glyph, and
-  -- calc_signs rejects a non-`add` hunk when untracked is true. Mirror its own
-  -- determination exactly.
+  -- calc_signs rejects a non-`add` hunk when untracked is true; mirror gitsigns'
+  -- own determination.
   local entry = cache_entry(bufnr)
   local untracked = false
   if entry ~= nil and type(entry.git_obj) == "table" then
@@ -172,7 +147,6 @@ function M.signs_for(bufnr)
   return out, hunks
 end
 
---- The extmark priority gitsigns places its signs at. We must beat it.
 --- @return integer
 function M.sign_priority()
   local cfg = gs_config()
@@ -183,9 +157,6 @@ function M.sign_priority()
 end
 
 --- The glyph gitsigns uses for a given sign type.
----
---- Mirroring the glyph means our override changes only the COLOUR of the cell,
---- not its shape — so a dimmed hunk still reads as the same kind of change.
 --- @param sign_type string
 --- @return string|nil
 function M.sign_text(sign_type)
@@ -200,9 +171,7 @@ function M.sign_text(sign_type)
   return entry.text
 end
 
---- Would gitsigns render anything in the sign column at all? If the user runs
---- `numhl`/`linehl` only, our sign overrides are invisible and we should say so
---- rather than silently do nothing (REDESIGN §6.5).
+--- With `numhl`/`linehl` only, sign overrides are invisible.
 --- @return boolean
 function M.signcolumn_enabled()
   local cfg = gs_config()

@@ -1,11 +1,4 @@
---- init.lua
----
 --- Public entry point: setup(), commands, autocommands, version check.
----
---- The whole user-facing surface is deliberately tiny (REDESIGN §1): the plugin
---- draws no column of its own, defines no regions, resolves no revisions, and
---- adds no navigation. `]c` remains gitsigns'. The only command worth binding is
---- the preview, and that REPLACES a gitsigns binding rather than adding one.
 
 local config = require("difftsigns.config")
 local attach = require("difftsigns.attach")
@@ -16,9 +9,8 @@ local M = {}
 
 local AUGROUP = "DifftSigns"
 
---- Warn once if the installed difftastic is not the version whose JSON we
---- validated against. The schema is explicitly unstable; the only honest
---- response is to be loud rather than silently mis-parse.
+--- difftastic's JSON schema is explicitly unstable, so an unvalidated version
+--- gets a loud warning rather than a silent mis-parse.
 local function check_version()
   local expected = config.values.difft_version_expected
   if expected == nil or expected == "" then
@@ -98,17 +90,15 @@ end
 local function register_autocmds()
   local group = vim.api.nvim_create_augroup(AUGROUP, { clear = true })
 
-  -- The single trigger for everything. gitsigns fires this whenever its hunks
-  -- change, which is precisely when our verdict could be stale. Driving off it
-  -- means we never annotate hunks gitsigns has already superseded, and we get
-  -- its buffer watching, its debounce, and its base changes for free.
+  -- The single trigger: gitsigns fires this whenever its hunks change, so we
+  -- never annotate hunks it has already superseded.
   vim.api.nvim_create_autocmd("User", {
     group = group,
     pattern = "GitSignsUpdate",
     callback = function(args)
       local bufnr = args.data and args.data.buffer
       if bufnr == nil then
-        -- A global update (HEAD changed): refresh every buffer we track.
+        -- Global update (HEAD changed).
         for _, b in ipairs(vim.api.nvim_list_bufs()) do
           if attach.is_attached(b) then
             attach.schedule(b)
@@ -152,9 +142,6 @@ function M.setup(opts)
   register_autocmds()
   check_version()
 
-  -- gitsigns is not optional under this design: we only ever demote cells it
-  -- drew, so without it there is nothing to annotate. Say so at setup() rather
-  -- than leaving the user to wonder why nothing happens.
   local available, reason = gs.available()
   if not available then
     vim.notify(
@@ -173,7 +160,7 @@ function M.setup(opts)
   end
 end
 
---- Statusline helper (REDESIGN R6: the reason must be queryable).
+--- Statusline helper.
 --- @param bufnr integer|nil
 --- @return string|nil
 function M.status(bufnr)
@@ -186,9 +173,8 @@ function M.preview()
   return require("difftsigns.preview").show()
 end
 
---- Whether a preview float is currently on screen. A `]c`/`[c` mapping can use
---- this to re-show the preview after navigating (keeping it open across hunks)
---- rather than letting the nav cursor move dismiss it.
+--- Whether a preview float is currently on screen, so a `]c`/`[c` mapping can
+--- re-show it after navigating instead of letting the cursor move dismiss it.
 --- @return boolean
 function M.preview_is_open()
   return require("difftsigns.preview").is_open()

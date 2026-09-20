@@ -1,28 +1,11 @@
---- preview.lua
+--- The hunk preview: one float showing the line hunk in gitsigns' familiar
+--- shape (removed lines, then added), with difftastic's token ranges as
+--- annotation inside it.
 ---
---- The unified hunk preview (REDESIGN §2 R5): one float showing the line hunk in
---- gitsigns' familiar shape, with difftastic's structural detail layered on top.
----
---- Why this is honest now, when the PoC's preview was not. The PoC previewed a
---- *structural chunk* and had to concede there was "no honest line block" for
---- one, so it invented a layout nobody asked for. Iteration 2 previews a *line
---- hunk*, which is an entirely honest line block — removed lines, then added
---- lines — and difftastic's token ranges become annotation INSIDE it. Same
---- philosophy as the gutter: don't build a parallel UI, enrich the existing one.
----
---- The source lines are shown VERBATIM and syntax-highlighted like the buffer
---- they came from: the float's filetype is set to the source buffer's, so
---- treesitter/syntax colours them exactly as you'd read them in place. The -/+
---- markers live in the SIGN COLUMN (not inline), so the source text starts at
---- column 0 and the highlighter parses clean lines rather than diff-prefixed
---- ones. Change emphasis is therefore a red/green BACKGROUND, not a foreground
---- colour, so it stands out without fighting the syntax colours underneath.
----
---- Three things are drawn that syntax highlighting alone cannot:
----   1. changed TOKENS washed with a directional background (difft's byte ranges);
----   2. reflow-only lines DIMMED, matching the gutter's verdict;
----   3. a header stating the split, so "3 of 5 lines are noise" is legible at a
----      glance rather than inferred.
+--- Source lines are shown verbatim with the source buffer's syntax highlighting.
+--- The -/+ markers live in the SIGN COLUMN so the highlighter parses clean
+--- lines, and change emphasis is a red/green BACKGROUND so it does not fight
+--- the syntax foreground.
 
 local config = require("difftsigns.config")
 local overlay = require("difftsigns.overlay")
@@ -32,13 +15,9 @@ local M = {}
 
 M.ns = vim.api.nvim_create_namespace("difftsigns_preview")
 
---- The float currently on screen, so a `]c`/`[c` mapping can ask whether a
---- preview is open and re-show it after moving, instead of gitsigns-style
---- navigation just dismissing it on the cursor move it causes.
 --- @type integer|nil
 local open_float = nil
 
---- Whether a preview float is currently on screen.
 --- @return boolean
 function M.is_open()
   return open_float ~= nil and vim.api.nvim_win_is_valid(open_float)
@@ -52,8 +31,6 @@ end
 --- @field token_hl  string|nil  -- directional BACKGROUND group for this line's token ranges
 --- @field tokens    { from: integer, to: integer }[]|nil  -- byte ranges to emphasise
 
---- Group a whole verdict group's edits by side and line, so each source line can
---- be drawn once with every changed token on it marked.
 --- @param group DifftSigns.Verdict[]
 local function edits_by_side(group)
   local by = { lhs = {}, rhs = {} }
@@ -69,12 +46,8 @@ local function edits_by_side(group)
   return by
 end
 
---- Build the float's contents for a group of contiguous verdicts.
----
---- Takes a GROUP rather than a single verdict because gitsigns can split one
---- logical edit into several adjacent hunks (see verdict.group_at_line). Keying
---- the preview to a single hunk made it show different content on different lines
---- of one visually contiguous block of signs.
+--- Build the float's contents for a group of contiguous verdicts (a GROUP, not
+--- one hunk: see verdict.group_at_line).
 ---
 --- @param bufnr integer
 --- @param group DifftSigns.Verdict[]  -- contiguous, sorted by buffer position
@@ -84,26 +57,19 @@ local function build(bufnr, group, ref)
   local out = {}
   local by = edits_by_side(group)
 
-  -- Aggregate the group into one unified-diff-style range, and one verdict
-  -- lookup per buffer line.
   local summary_sig, summary_noise = 0, 0
   local rem_start, rem_count, add_start, add_count = nil, 0, nil, 0
   local kinds, seen_kind = {}, {}
   local verdict_for_line = {}
 
-  -- Does anything real happen in this group at all? The counters below see only
-  -- BUFFER lines, so a merged `delete` hunk — which adds none — contributes
-  -- nothing to them however much it removed. Without this, the group that
-  -- collapsed six import lines onto one was headed "formatting only — no
-  -- structural change" while four of those lines were genuine deletions.
+  -- The counters below see only BUFFER lines, so a merged `delete` hunk
+  -- contributes nothing to them however much it removed.
   local any_real = false
 
-  -- A zero-count side reports an insertion *point*, not a real line: an `add`
-  -- hunk's `removed.start` is "the line after which this was inserted". Letting
-  -- it into the range minimum shifts the header by one (observed: `-362,1` for a
-  -- hunk that actually removed line 363). So only counted sides set the start,
-  -- and the anchors are kept separately as a fallback for a group that adds or
-  -- removes nothing at all.
+  -- A zero-count side reports an insertion *point*, not a real line (an `add`
+  -- hunk's `removed.start` is "the line after which this was inserted"), so it
+  -- must not enter the range minimum. Kept separately as a fallback for a
+  -- group that adds or removes nothing at all.
   local rem_anchor, add_anchor = nil, nil
 
   for _, v in ipairs(group) do
@@ -144,47 +110,31 @@ local function build(bufnr, group, ref)
     add_start or add_anchor or 0, add_count
   )
 
-  -- ONE-SIDED CHANGES SHOW ONE SIDE.
+  -- One-sided changes show one side, decided by TOKEN DETAIL rather than line
+  -- counts: gitsigns calls a hunk `change` whenever both sides have lines, but
+  -- it can be a pure addition or deletion with the other side merely reindented.
+  -- With no tokens on either side the hunk is formatting-only and both sides
+  -- ARE the information.
   --
-  -- If every token difftastic reported lives on one side, the other side has
-  -- nothing to say and printing it is pure dead weight — you get a column of
-  -- lines with no colour on them, and have to work out for yourself that none of
-  -- them is the point. Observed in crawlee: adding an argument rendered the old
-  -- line in full underneath, entirely uncoloured, purely to be ignored.
-  --
-  -- Note this is decided by TOKEN DETAIL, not by line counts: gitsigns calls a
-  -- hunk a `change` whenever both sides have lines, but a change can be
-  -- semantically pure-addition (a wrapped block, an added argument) or
-  -- pure-deletion (a removed argument) with the opposite side merely reindented.
-  --
-  -- When NEITHER side has tokens the hunk is formatting-only, and then both sides
-  -- ARE the information — that is the one case where seeing the reflow matters.
-  --
-  -- The exception is the added side, the only place the RESULTING code appears.
-  -- Dropping it is legible when the sides correspond line for line, since the
-  -- result then reads as "the shown line minus the red tokens". When the counts
-  -- differ, the shape itself changed and that subtraction is not available: six
-  -- import lines collapsing onto one rendered as `deletions only`, so a name that
-  -- survived on the unprinted new line read as deleted.
+  -- The added side is kept when the line counts differ: the result then cannot
+  -- be read as "the shown line minus the red tokens", and a name surviving on
+  -- an unprinted new line would read as deleted.
   local has_lhs = next(by.lhs) ~= nil
   local has_rhs = next(by.rhs) ~= nil
   local show_removed = has_lhs or not has_rhs
   local show_added = has_rhs or not has_lhs or rem_count ~= add_count
 
-  -- Say so when a side is suppressed, but only when its absence would be
-  -- surprising — i.e. the hunk really does have lines there and we chose not to
-  -- print them. For an `add`/`delete` hunk the one-sidedness is already obvious.
+  -- Only when the hunk really has lines there; for an `add`/`delete` hunk the
+  -- one-sidedness is already obvious.
   local trimmed = ""
   if not show_removed and rem_count > 0 then
     trimmed = " · additions only"
   elseif not show_added and add_count > 0 then
     trimmed = " · deletions only"
   end
-  -- Make it explicit when several gitsigns hunks were merged, so the aggregated
-  -- range is not mistaken for a single hunk gitsigns would stage as a unit.
+  -- So the aggregated range is not mistaken for something gitsigns stages as a unit.
   local merged = #group > 1 and (" (%d hunks)"):format(#group) or ""
 
-  -- Header: the one line that makes the plugin's judgement explicit.
   local header
   if summary_noise > 0 and summary_sig > 0 then
     header = ("%s %s%s%s  %d real, %d formatting-only")
@@ -197,36 +147,16 @@ local function build(bufnr, group, ref)
   end
   out[#out + 1] = { text = header, hl = "Title" }
 
-  --- Emit one source line.
-  ---
-  --- WHERE THE COLOUR GOES, and why. The line itself is drawn with the source
-  --- buffer's own syntax highlighting, so change emphasis must sit ON TOP of that
-  --- rather than replace it: changed tokens get a directional BACKGROUND wash
-  --- (green added, red removed) that leaves the syntax foreground legible, plus a
-  --- `-`/`+` marker in the sign column so sides stay scannable.
-  ---
-  --- Four cases, in order:
-  ---   1. whole line changed -> whole-line background wash, NO syntax. Either the
-  ---      line exists on one side of the GROUP only (a pure deletion or addition:
-  ---      it went away or arrived entire, and marking the tokens inside it says
-  ---      nothing the -/+ marker did not), or difftastic supplied no chunks at
-  ---      all (whole-file created/deleted).
-  ---
-  ---      GROUP, not hunk: with `linematch` gitsigns splits one logical edit into
-  ---      adjacent hunks, so a hunk can read as one-sided while the run it belongs
-  ---      to has lines on both sides. Judged per hunk, four surviving import lines
-  ---      were washed red because the single line replacing them had been split
-  ---      into a hunk of its own — burying the token detail this preview exists
-  ---      to show under a wash that said "all of this is gone".
-  ---   2. tokens present     -> token backgrounds only, over syntax. The precise
-  ---      answer.
-  ---   3. significant, but no tokens on THIS side -> syntax only, no wash. Happens
-  ---      via cross-attribution: `doThing(alpha, beta)` -> `doThing(alpha)` is
-  ---      real, but nothing was *added*, so the `+` line has no added token. A
-  ---      wash would lie; dimming would deny it is part of a real change. The
-  ---      marker carries the side, and the `-` line above carries the red wash.
-  ---   4. otherwise          -> dimmed, matching the gutter's reflow verdict. The
-  ---      dim intentionally overrides syntax: "this is noise" is the point.
+  --- Emit one source line. Four cases, in order:
+  ---   1. whole line changed -> whole-line wash, no syntax. The line exists on
+  ---      one side of the GROUP only, or difftastic supplied no chunks at all.
+  ---      Group, not hunk: linematch can split one-sided-looking hunks out of a
+  ---      run that has lines on both sides.
+  ---   2. tokens present -> token backgrounds only, over syntax.
+  ---   3. significant, no tokens on THIS side -> syntax only. Cross-attribution:
+  ---      `doThing(alpha, beta)` -> `doThing(alpha)` is real but nothing was
+  ---      *added*. A wash would lie; a dim would deny it is part of a real change.
+  ---   4. otherwise -> dimmed, matching the gutter. Overrides syntax on purpose.
   ---
   --- @param prefix string       -- "-" or "+"
   --- @param text string
@@ -262,19 +192,14 @@ local function build(bufnr, group, ref)
     }
   end
 
-  -- Removed side, from the retained reference text, in buffer order across the
-  -- whole group.
   if ref ~= nil and show_removed then
     for _, v in ipairs(group) do
       local r = v.hunk.removed
-      -- Nothing was added against these lines, so every token on them is gone by
-      -- definition: wash the line, like gitsigns would.
       local whole_line = v.no_token_detail or add_count == 0
       for lnum = r.start, r.start + r.count - 1 do
         local src = ref[lnum]
         if src ~= nil then
-          -- A removed line is judged by the REFERENCE side: it has no buffer line
-          -- of its own to consult.
+          -- Judged by the REFERENCE side: no buffer line of its own to consult.
           push("-", src, "DifftSignsRemovedBg", "DifftSignsRemoved", by.lhs[lnum],
             v.anchor_significant, whole_line)
         end
@@ -282,7 +207,6 @@ local function build(bufnr, group, ref)
     end
   end
 
-  -- Added side, read live from the buffer, in buffer order across the group.
   for _, v in ipairs(show_added and group or {}) do
     local a = v.hunk.added
     if a.count > 0 then
@@ -304,17 +228,10 @@ local function build(bufnr, group, ref)
   return out
 end
 
---- Give the float the source buffer's own syntax highlighting.
----
---- Prefer treesitter (it parses the real language and is what colours a modern
---- buffer); fall back to legacy `:syntax` via a filetype only when no treesitter
---- parser is installed. Failures are swallowed: a preview with no syntax colour
---- is a mild downgrade, not a reason to refuse to open.
----
---- Only source lines are meant to be highlighted, but the highlighter parses the
---- whole buffer (header included). That is harmless: every non-source line
---- carries a whole-line extmark (Title/Comment/dim) placed above the syntax
---- layer, so it paints over any stray syntax colour on those rows.
+--- Treesitter first, legacy `:syntax` when no parser is installed. Failures
+--- are swallowed: no syntax colour is a mild downgrade, not a reason to refuse.
+--- The highlighter also parses the header row, which is harmless: every
+--- non-source row carries a whole-line extmark above the syntax layer.
 ---
 --- @param buf integer            -- the float's scratch buffer
 --- @param src_ft string          -- the source buffer's filetype
@@ -329,9 +246,8 @@ local function apply_source_syntax(buf, src_ft)
     return
   end
 
-  -- No parser: fall back to legacy syntax. Setting `syntax` (not `filetype`)
-  -- loads the highlighter without firing filetype autocmds — no LSP or plugins
-  -- attach to this throwaway buffer.
+  -- `syntax`, not `filetype`: no filetype autocmds, so no LSP attaches to this
+  -- throwaway buffer.
   pcall(function()
     vim.bo[buf].syntax = src_ft
   end)
@@ -342,8 +258,6 @@ end
 --- @param winid integer|nil
 --- @return integer|nil float_win
 function M.show(bufnr, winid)
-  -- Resolve the "0 means current" convention: our per-buffer state is keyed by
-  -- real buffer number, so an unresolved 0 would look like an unknown buffer.
   if bufnr == nil or bufnr == 0 then
     bufnr = vim.api.nvim_get_current_buf()
   end
@@ -351,9 +265,8 @@ function M.show(bufnr, winid)
     winid = vim.api.nvim_get_current_win()
   end
 
-  -- Re-showing (e.g. from a `]c` that advanced to the next hunk): drop the old
-  -- float first, otherwise its still-pending CursorMoved autocmd would close the
-  -- new one the moment the cursor settles.
+  -- Drop the old float first, otherwise its still-pending CursorMoved autocmd
+  -- would close the new one the moment the cursor settles.
   if M.is_open() then
     vim.api.nvim_win_close(open_float, true)
     open_float = nil
@@ -367,9 +280,6 @@ function M.show(bufnr, winid)
   end
 
   local cursor = vim.api.nvim_win_get_cursor(winid)[1]
-  -- The whole contiguous run, not one hunk: gitsigns may have split a single
-  -- logical edit, and previewing only part of it gave different results on
-  -- different lines of one unbroken block of signs.
   local group = verdict.group_at_line(set, cursor)
   if #group == 0 then
     vim.notify("difftsigns: no hunk under the cursor", vim.log.levels.INFO)
@@ -385,27 +295,13 @@ function M.show(bufnr, winid)
   end
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, texts)
 
-  -- The source buffer's syntax highlighting is applied to the source lines, so
-  -- they read exactly as they do in place. This sits UNDERNEATH our extmarks:
-  -- treesitter/syntax highlights are low priority (treesitter defaults to 100),
-  -- and our token/whole-line washes only touch the background, so the syntax
-  -- foreground stays legible through them. The one group that DOES override
-  -- syntax is DifftSignsContext (the dim), which is the point: a reflow-only line
-  -- should recede, colour and all. It also paints the header/no-content rows,
-  -- which are not source and would otherwise be mis-highlighted by the parser.
   local src_ft = vim.bo[bufnr].filetype
   apply_source_syntax(buf, src_ft)
 
-  -- Both priorities are set EXPLICITLY, and the ordering between them relative to
-  -- the syntax layer is what makes the structural highlight visible at all.
-  --
-  -- nvim_buf_set_extmark defaults `priority` to 4096. An earlier version set the
-  -- whole-line highlight with no priority (so: 4096) and the token highlight to
-  -- 200, on the assumption that "placed later wins". It does not — extmark
-  -- precedence is by priority alone. The line highlight therefore painted over
-  -- every token highlight and the structural change, the one thing this preview
-  -- exists to show, was invisible in every hunk. Both must also sit ABOVE the
-  -- treesitter layer (priority 100) so the token wash and the dim actually show.
+  -- Extmark precedence is by priority alone, not placement order, and
+  -- nvim_buf_set_extmark defaults to 4096. Both must sit above treesitter (100)
+  -- and the token wash must beat the line wash or the structural change is
+  -- invisible under it.
   local PRIORITY_LINE = 150
   local PRIORITY_TOKEN = 200
 
@@ -417,16 +313,11 @@ function M.show(bufnr, winid)
         end_row = row,
         end_col = #l.text,
         hl_group = l.hl,
-        -- Extend the wash/dim across the full row so a reformatted line reads as
-        -- one continuous block, like a real diff. Sits above the syntax layer so
-        -- the dim actually shows (a dimmed noise line must beat syntax colours).
         hl_eol = true,
         priority = PRIORITY_LINE,
       })
     end
 
-    -- The leading -/+ marker, in the sign column, so sides stay scannable while
-    -- the source text starts at column 0 and highlights cleanly.
     if l.sign ~= nil then
       vim.api.nvim_buf_set_extmark(buf, M.ns, row, 0, {
         sign_text = l.sign,
@@ -457,24 +348,19 @@ function M.show(bufnr, winid)
     width = math.max(width, vim.fn.strdisplaywidth(t))
   end
 
-  -- Anchored to the hunk line in the buffer text (`bufpos`), not to a screen row
-  -- computed once at open: `zz`/`zt`/`zb` and CTRL-E/Y scroll the text without
-  -- moving the cursor, so no CursorMoved fires to dismiss the float and a fixed
-  -- window-relative row detaches it from the line it describes. bufpos also gets
-  -- wrap and folds right for free, and text column 0 already clears the gutter,
-  -- so the float lands in the same place whatever the cursor column.
+  -- Anchored to the hunk line via `bufpos`, not a screen row computed at open:
+  -- `zz`/`zt`/`zb` and CTRL-E/Y scroll without firing CursorMoved, and a fixed
+  -- row would detach the float from the line it describes.
   --
-  -- Widen by 2 for the sign column that carries the -/+ markers: `style=minimal`
-  -- suppresses it by default, so we turn it back on below and must leave room.
+  -- +2 for the sign column carrying the -/+ markers (`style=minimal` suppresses
+  -- it; re-enabled below).
   local SIGN_WIDTH = 2
   local BORDER_ROWS = 2
   local float_width = math.max(20, math.min(width + SIGN_WIDTH, math.floor(vim.o.columns * 0.85)))
   local float_height = math.min(#texts, 24)
 
-  -- Below the hunk line, or above it when there is no room below: nvim clamps a
-  -- float that overflows the grid instead of flipping it, which parks the preview
-  -- mid-window with a gap between it and the hunk. `zb` on an open preview is
-  -- exactly that case, so the side is re-picked on scroll too.
+  -- Below the hunk line, or above when there is no room: nvim clamps an
+  -- overflowing float instead of flipping it, parking it mid-window.
   --- @return "NW"|"SW" anchor, integer row
   local function side()
     local screen_row = vim.fn.screenpos(winid, cursor, 1).row
@@ -501,18 +387,13 @@ function M.show(bufnr, winid)
     title_pos = "left",
   })
 
-  -- `style=minimal` sets signcolumn=no; the -/+ markers live there, so re-enable
-  -- it, pinned to one cell so the source text stays aligned with the header.
   vim.wo[float].signcolumn = "yes:1"
 
   open_float = float
 
-  -- Dismiss when the cursor genuinely LEAVES the hunk, like gitsigns' own
-  -- preview — not on the first CursorMoved unconditionally. gitsigns' async
-  -- nav_hunk sets the cursor and then emits trailing CursorMoved/redraw events at
-  -- the new position; a `once` autocmd fired on one of those and closed the float
-  -- a `]c` re-show had just opened, so the preview never survived a jump. Anchor
-  -- on the position we opened at and only close on a real move away from it.
+  -- Dismiss only when the cursor LEAVES the position we opened at. gitsigns'
+  -- async nav_hunk emits trailing CursorMoved events at the new position, so a
+  -- `once` autocmd would close a `]c` re-show immediately.
   local anchor_win = winid
   local anchor_pos = vim.api.nvim_win_get_cursor(winid)
 
@@ -527,7 +408,6 @@ function M.show(bufnr, winid)
 
   vim.api.nvim_create_autocmd("CursorMoved", {
     callback = function()
-      -- Gone once the float is closed (by us, a re-show, or the user).
       if not vim.api.nvim_win_is_valid(float) then
         return true
       end
@@ -578,8 +458,7 @@ function M.show(bufnr, winid)
   return float
 end
 
---- Expose the builder for tests, so the layout can be asserted without opening
---- a window.
+--- Test hook: the layout without opening a window.
 --- @param bufnr integer
 --- @param group DifftSigns.Verdict[]  -- contiguous verdict group
 --- @param ref string[]|nil

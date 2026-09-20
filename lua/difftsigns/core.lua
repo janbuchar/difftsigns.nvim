@@ -1,24 +1,15 @@
---- core.lua
+--- The difftastic parse boundary. All knowledge of difftastic's JSON lives here;
+--- nothing above this file knows difft exists.
 ---
---- The difftastic parse boundary (REDESIGN §4). ALL knowledge of difftastic's
---- JSON wire format lives here. Nothing above this file knows difft exists.
+--- Produces no geometry (that is gitsigns' job), only the sets of lines that
+--- genuinely changed plus the token ranges behind them for the preview.
 ---
---- Note what this file does NOT produce: spans, regions, hunks, or any other
---- geometry. Geometry is gitsigns' job (REDESIGN §2 R2). difftastic's only
---- output here is a verdict expressed as *sets of lines that genuinely changed*,
---- plus the token ranges behind them for the preview. Demoting difftastic from
---- geometry provider to annotator is the entire point of iteration 2.
----
---- Empirically verified against Difftastic 0.70.0. Schema quirks that are easy
---- to get wrong (see REDESIGN §7):
+--- Verified against Difftastic 0.70.0. Schema quirks:
 ---   * Line numbers are 0-BASED. Normalised to 1-based here, once.
----   * `unchanged` / `created` / `deleted` omit `chunks` (and `aligned_lines`)
----     entirely. Guard for absence; never assume presence.
+---   * `unchanged` / `created` / `deleted` omit `chunks` entirely.
 ---   * A chunk entry is `{ lhs?: Side, rhs?: Side }`; either side may be absent.
----     lhs-only means content that exists only in the reference (a deletion).
----   * A side with an EMPTY `changes` array is context, not a change. This
----     distinction is the whole plugin: it is how a reindented line is told
----     apart from an edited one.
+---   * A side with an EMPTY `changes` array is context, not a change. This is
+---     how a reindented line is told apart from an edited one.
 
 local M = {}
 
@@ -43,24 +34,15 @@ local M = {}
 
 --- Has difftastic given up on structural diffing and returned a line diff?
 ---
---- It signals this through `language`, but NOT with a single fixed string. Known
---- forms, all of which must be caught:
+--- Signalled through `language`, but not with one fixed string. Known forms:
 ---
 ---   "Text"                             -- no tree-sitter parser for this type
----   "Text (exceeded DFT_GRAPH_LIMIT)"  -- diff graph too large; gave up
----   "Text (13 B exceeded DFT_BYTE_LIMIT)"  -- file too large; gave up
+---   "Text (exceeded DFT_GRAPH_LIMIT)"
+---   "Text (13 B exceeded DFT_BYTE_LIMIT)"
 ---   "Text (4 JavaScript parse errors, exceeded DFT_PARSE_ERROR_LIMIT, first at 3:0)"
 ---
---- Note that the parenthesised part is prose, not a fixed token: 0.70 added the
---- error count and the position of the first parse error to it. Matching on the
---- "exceeded DFT_*" substring rather than the whole string is what kept that
---- change from being a breakage.
----
---- An earlier version matched only the exact strings "Text"/"text", so the
---- parenthesised limit forms slipped through and the plugin presented a LINE DIFF
---- as a structural verdict — marking every token on every changed line, spaces
---- included, which reads as "the whole hunk was rewritten". That is the single
---- outcome both design documents swore to avoid, so this is now matched by shape.
+--- The parenthesised part is prose and has already grown between versions, so
+--- match on the "exceeded DFT_*" substring, never the whole string.
 ---
 --- @param language string|nil
 --- @return boolean fallback
@@ -75,8 +57,7 @@ local function classify_language(language)
   if language:lower():find("exceeded dft_byte_limit", 1, true) then
     return true, "difftastic hit its byte limit (file too large)"
   end
-  -- The one fallback cause that is normally the buffer's fault rather than a
-  -- limit: mid-edit code frequently does not parse, so say where it broke.
+  -- Usually the buffer's fault (mid-edit code does not parse), so say where.
   if language:lower():find("exceeded dft_parse_error_limit", 1, true) then
     local at = language:match("first at ([%d:]+)")
     if at ~= nil then
@@ -87,7 +68,6 @@ local function classify_language(language)
   if language:lower():find("exceeded", 1, true) then
     return true, "difftastic gave up: " .. language
   end
-  -- Any "Text" or "Text (...)" form means no structural parse happened.
   if language == "Text" or language == "text" or language:match("^[Tt]ext%s*%(") then
     return true, "no structural parser for this file type"
   end
@@ -109,17 +89,13 @@ local function empty_result(language, status)
   }
 end
 
---- Highlight classes whose atoms difftastic word-diffs INTERNALLY. Rewording a
---- doc comment or a string literal reports the atom's inter-word spaces as
---- changed tokens, so whitespace in one of these is genuine structural output.
---- Verified against 0.70.0; used by the shape check in `M.parse`.
+--- Highlight classes whose atoms difftastic word-diffs INTERNALLY: rewording a
+--- comment or string reports its inter-word spaces as changed tokens, so
+--- whitespace in one of these is genuine structural output. Verified on 0.70.0.
 local WORD_DIFFED_ATOMS = { comment = true, string = true }
 
---- Parse one decoded difftastic file object into a DiffResult.
----
---- Pure: no Neovim API, no IO, no subprocess. Feed it `vim.json.decode(fixture)`
---- and assert on the line sets. This is deliberate — it is the cheapest possible
---- place to pin down schema behaviour.
+--- Parse one decoded difftastic file object into a DiffResult. Pure: feed it
+--- `vim.json.decode(fixture)`.
 ---
 --- @param decoded table
 --- @return DifftSigns.DiffResult
@@ -132,16 +108,13 @@ function M.parse(decoded)
   local language = decoded.language or "unknown"
   local result = empty_result(language, status)
 
-  -- `unchanged` is the most valuable answer this plugin ever receives: it means
-  -- whatever the line differ found (a reformat, a rewrap, a reindent) contained
-  -- no structural change at all, so EVERY marked line is noise. Verified: a
-  -- prettier-style argument rewrap, trailing comma included, reports unchanged.
+  -- `unchanged` means every line the line differ marked is noise. Verified: a
+  -- prettier-style rewrap, trailing comma included, reports unchanged.
   if status == "unchanged" then
     return result
   end
 
-  -- Whole-file add/remove. difft omits chunks for these, so there is no token
-  -- detail to harvest and nothing to dim: it is all genuinely new or gone.
+  -- difft omits chunks for these, so there is no token detail and nothing to dim.
   if status == "created" or status == "deleted" then
     result.all_significant = true
     return result
@@ -149,9 +122,8 @@ function M.parse(decoded)
 
   local chunks = decoded.chunks
   if type(chunks) ~= "table" then
-    -- Schema drift or an unexpected shape. Returning an empty verdict would
-    -- claim "everything is noise" and wrongly dim real changes, so treat it as
-    -- no answer instead (REDESIGN R6: place nothing, stay out of the way).
+    -- An empty verdict would claim "everything is noise" and dim real changes;
+    -- schema drift must read as no answer instead.
     result.fallback = true
     return result
   end
@@ -166,14 +138,9 @@ function M.parse(decoded)
     end
   end
 
-  -- SAFETY NET, independent of the `language` string, which belongs to an
-  -- explicitly unstable schema and has already changed shape once under us.
-  --
-  -- A line-diff fallback marks every token on the line, spaces included, and
-  -- labels them all `normal`: the captured graph-limit fallback is 1112 changes,
-  -- all `normal`, 538 of them single spaces. Whitespace inside a word-diffed atom
-  -- is not that — see `WORD_DIFFED_ATOMS`. Testing for whitespace alone, as an
-  -- earlier version did, stood down on any file carrying a reworded comment.
+  -- Safety net independent of the unstable `language` string: a line-diff
+  -- fallback marks every token on the line, spaces included, all `normal`.
+  -- Whitespace inside a word-diffed atom is not that (see WORD_DIFFED_ATOMS).
   if not result.fallback then
     for _, e in ipairs(result.edits) do
       if e.content:match("^%s+$") ~= nil and not WORD_DIFFED_ATOMS[e.highlight] then
@@ -188,12 +155,8 @@ function M.parse(decoded)
   return result
 end
 
---- Inspect one side of a chunk entry.
----
---- The `#changes > 0` test is the load-bearing comparison of this file.
---- difftastic includes context lines inside chunks carrying an EMPTY `changes`
---- array; counting those as changed would reintroduce line-diff semantics and
---- defeat the plugin entirely.
+--- Inspect one side of a chunk entry. `#changes > 0` is the load-bearing test:
+--- context lines appear inside chunks with an EMPTY `changes` array.
 ---
 --- @param sd table|nil
 --- @return integer|nil line     -- 1-based line number on that side
@@ -224,8 +187,7 @@ local function collect_edits(result, side, sd, line)
         line = line,
         content = ch.content,
         highlight = ch.highlight or "normal",
-        -- difftastic's start/end are 0-based byte offsets into the line, which
-        -- is exactly what nvim_buf_set_extmark wants for an inline highlight.
+        -- 0-based byte offsets, which is what nvim_buf_set_extmark wants.
         col_start = ch.start or 0,
         col_end = ch["end"] or 0,
       }
@@ -235,25 +197,16 @@ end
 
 --- Record one chunk entry (an aligned lhs/rhs line pair) into the result.
 ---
---- CROSS-ATTRIBUTION, and why it is required.
----
---- A chunk entry is difftastic's own statement that these two lines correspond.
---- Crucially, a real structural change at that position can be visible on only
---- ONE side. Removing a call argument is the canonical case:
+--- A change on EITHER side marks the aligned line on BOTH sides. A real change
+--- can be visible on only one side — removing a call argument:
 ---
 ---     before:  doThing(alpha, beta);      after:  doThing(alpha);
 ---     lhs: changes = [',', 'beta']        rhs: changes = []   (context!)
 ---
---- The rhs line's own difference is purely whitespace, so difftastic correctly
---- reports it as context — nothing was *added* there. Reading only the rhs side
---- therefore concludes "this buffer line did not really change" and DIMS a line
---- from which a token was genuinely deleted. That is the worst failure this
---- plugin can produce: actively hiding a real change.
----
---- So a change on either side marks the aligned line on BOTH sides. This is safe
---- because difftastic never reports whitespace as a change — a pure reindent
---- yields `status: unchanged` with no chunks at all — so the mere presence of a
---- `changes` entry always means a real token moved, appeared, or vanished.
+--- Reading only the rhs would dim a line from which a token was genuinely
+--- deleted. Cross-attribution is safe because difftastic never reports
+--- whitespace as a change (a pure reindent yields `status: unchanged`), so any
+--- `changes` entry means a real token moved, appeared, or vanished.
 ---
 --- @param result DifftSigns.DiffResult
 --- @param entry table  -- { lhs?: Side, rhs?: Side }
@@ -261,7 +214,6 @@ function M._harvest_entry(result, entry)
   local lhs_line, lhs_changed = side_info(entry.lhs)
   local rhs_line, rhs_changed = side_info(entry.rhs)
 
-  -- A real change at this aligned position, seen from either side.
   local changed_here = lhs_changed or rhs_changed
 
   if changed_here then
@@ -279,9 +231,6 @@ end
 
 --- @async
 --- Run difftastic over two texts and return the parsed verdict.
----
---- Knows nothing about gitsigns, git, or buffers. Callers decide what the two
---- sides are.
 ---
 --- @param old_text string[]  -- reference side (lhs)
 --- @param new_text string[]  -- comparison side (rhs)

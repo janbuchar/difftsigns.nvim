@@ -1,9 +1,4 @@
--- Minimal init for headless test runs. Puts this plugin, plenary, and gitsigns
--- on the runtimepath and nothing else, so tests are hermetic.
---
--- gitsigns is included because it is a HARD dependency of this plugin, not an
--- optional integration: difftsigns only ever demotes cells gitsigns drew. A test
--- suite that stubbed it out would be testing a plugin nobody can run.
+-- Hermetic runtimepath: this plugin, plenary, gitsigns (a hard dependency).
 
 local data = vim.fn.stdpath("data")
 

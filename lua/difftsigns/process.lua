@@ -1,7 +1,4 @@
---- process.lua
----
---- Spawns difftastic with cancellation and temp-file writing. Together with
---- core.lua this is the only place that knows difft exists as a subprocess.
+--- Spawns difftastic with cancellation and temp-file writing.
 
 local M = {}
 
@@ -9,10 +6,8 @@ local M = {}
 --- @class DifftSigns.Job
 --- @field cancel fun()
 
---- difft diffs files, not strings, and infers the language from the path: a bare
---- `tempname()` has no extension, so difft detects "Text" and silently falls back
---- to a line diff. Keep the source extension so its own detection works even when
---- the caller supplies no explicit `lang`.
+--- difft infers the language from the path: a bare `tempname()` has no
+--- extension, so it would detect "Text" and silently fall back to a line diff.
 --- @param lines string[]
 --- @param ext string|nil  -- extension WITHOUT the dot, e.g. "rs"
 --- @return string|nil path
@@ -96,14 +91,14 @@ function M.run(old_text, new_text, opts, callback)
     -- --display json is gated behind DFT_UNSTABLE=yes.
     env = { DFT_UNSTABLE = "yes" },
   }, function(res)
-    -- on_exit runs in libuv's fast context; cleanup is uv-safe, the callback is not.
+    -- on_exit runs in libuv's fast context; the callback is not uv-safe.
     vim.schedule(function()
       cleanup()
       if cancelled then
         return
       end
       -- With --display json a successful run exits 0 or 1 ("files differ").
-      -- Anything else (notably 2 = the DFT_UNSTABLE gate, or a crash) is an error.
+      -- 2 is the DFT_UNSTABLE gate.
       if res.code ~= 0 and res.code ~= 1 then
         callback("difftsigns: difft exited with code " .. res.code .. ": " .. (res.stderr or ""), nil)
         return
@@ -124,7 +119,6 @@ function M.run(old_text, new_text, opts, callback)
         return
       end
       cancelled = true
-      -- Stale structural diffs are worse than absent ones.
       pcall(proc.kill, proc, "sigterm")
     end,
   }

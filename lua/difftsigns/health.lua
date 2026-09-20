@@ -1,12 +1,5 @@
---- health.lua — `:checkhealth difftsigns`
----
---- This plugin has two hard external dependencies and one explicitly unstable
---- wire format, so "why is nothing dimmed?" will be the only support question
---- anyone ever asks. Every way that can happen is reported here:
----   * difftastic missing, or a version whose JSON we have not validated;
----   * the DFT_UNSTABLE gate on --display json;
----   * gitsigns missing, or its internals moved under us;
----   * gitsigns configured without a sign column, so overrides are invisible.
+--- `:checkhealth difftsigns`. "Why is nothing dimmed?" is the only support
+--- question this plugin will ever get; every cause is reported here.
 
 local config = require("difftsigns.config")
 local gs = require("difftsigns.gitsigns")
@@ -81,8 +74,7 @@ local function check_gitsigns()
     })
   end
 
-  -- The one genuinely fragile dependency: two of the four things we read from
-  -- gitsigns are internal. Report it plainly rather than pretending otherwise.
+  -- Two of the four things read from gitsigns are internal.
   local cache_ok = pcall(function()
     return require("gitsigns.cache").cache
   end)

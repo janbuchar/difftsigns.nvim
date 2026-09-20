@@ -1,18 +1,11 @@
---- verdict.lua
----
 --- The join: gitsigns' hunk geometry x difftastic's structural verdict.
---- This is the heart of the plugin and the only genuinely novel logic in it.
 ---
---- PURE BY MANDATE (REDESIGN §5). No Neovim API, no IO, no subprocess, no
---- require of gitsigns. Plain tables in, plain tables out. This is deliberate:
---- the hard cases here (deletion anchoring, changedelete markers) are exactly
---- the ones that produce off-by-one verdicts on the wrong line, so they must be
---- the cheapest thing in the tree to test exhaustively.
+--- Pure: no Neovim API, no IO, no require of gitsigns. Plain tables in, plain
+--- tables out, so the off-by-one cases (deletion anchoring, changedelete
+--- markers) are cheap to test exhaustively.
 ---
---- The asymmetry that governs every decision in this file: **wrongly dimming a
---- real change is much worse than failing to dim noise.** A missed dim is a
---- cosmetic disappointment; a wrong dim actively hides a real change from
---- review. Every ambiguous case therefore resolves to "significant".
+--- Wrongly dimming a real change is much worse than failing to dim noise, so
+--- every ambiguous case resolves to "significant".
 
 local M = {}
 
@@ -29,10 +22,8 @@ local M = {}
 --- @field verdicts    DifftSigns.Verdict[]
 --- @field unavailable boolean  -- no structural answer; caller must place nothing
 
---- Last buffer line of a hunk's "changed" portion.
----
---- Mirrors gitsigns' internal `change_end`. Reproduced rather than imported so
---- this file stays pure; pinned by tests against gitsigns' real sign placement.
+--- Last buffer line of a hunk's "changed" portion. Mirrors gitsigns' internal
+--- `change_end`; reproduced to keep this file pure, pinned by tests.
 --- @param hunk table
 --- @return integer
 local function change_end(hunk)
@@ -55,10 +46,8 @@ function M.compute(hunks, diff)
     return { verdicts = {}, unavailable = true }
   end
 
-  -- No structural answer available. Critically we must NOT return an empty
-  -- verdict set here: empty verdicts read as "nothing is significant", which
-  -- would dim every real change in the buffer. Refusing to answer means the
-  -- caller places nothing and the user sees plain gitsigns (REDESIGN R6).
+  -- Not an empty verdict set: that would read as "nothing is significant" and
+  -- dim every real change in the buffer.
   if diff.fallback then
     return { verdicts = {}, unavailable = true }
   end
@@ -67,8 +56,6 @@ function M.compute(hunks, diff)
   local changed_rhs = diff.changed_rhs or {}
   local changed_lhs = diff.changed_lhs or {}
 
-  -- Bucket edits by side/line once, so attributing them to hunks is O(1) per
-  -- line rather than O(edits) per hunk.
   local edits_by_side = { lhs = {}, rhs = {} }
   for _, e in ipairs(diff.edits or {}) do
     local bucket = edits_by_side[e.side]
@@ -87,8 +74,6 @@ function M.compute(hunks, diff)
       local edits = {}
       local significant = false
 
-      -- Buffer-side lines: judged directly by difftastic's rhs verdict. This is
-      -- where a reindented line gets dimmed and an edited line does not.
       for lnum = added.start, added.start + added.count - 1 do
         local sig = all or changed_rhs[lnum] == true
         lines[lnum] = sig
@@ -98,9 +83,8 @@ function M.compute(hunks, diff)
         end
       end
 
-      -- Reference-only content (whole or partial deletions) has no buffer line
-      -- of its own. Judge it from difftastic's lhs verdict over the removed
-      -- range, and carry that as a separate anchor verdict.
+      -- Reference-only content has no buffer line of its own; judge it from
+      -- the lhs verdict over the removed range and carry it as an anchor verdict.
       local anchor_significant = all
       for lnum = removed.start, removed.start + removed.count - 1 do
         if changed_lhs[lnum] == true then
@@ -111,17 +95,14 @@ function M.compute(hunks, diff)
         end
       end
 
-      -- A `delete` hunk removes lines without adding any: it is significant iff
-      -- the removed content was structurally real.
       if added.count == 0 then
         significant = significant or anchor_significant
       end
 
       -- gitsigns draws `changedelete` on the LAST changed line of a hunk that
-      -- removed more lines than it added. That one cell carries deletion
-      -- semantics on top of its own line's verdict, so it must be able to stay
-      -- lit when the deletion was real even if the line itself only reflowed.
-      -- Getting this wrong silently hides deletions; hence the special case.
+      -- removed more than it added. That cell carries deletion semantics on top
+      -- of its own line's verdict, so it must stay lit when the deletion was
+      -- real even if the line itself only reflowed.
       local delete_marker_line = nil
       if added.count > 0 and removed.count > added.count then
         delete_marker_line = change_end(hunk)
@@ -135,10 +116,8 @@ function M.compute(hunks, diff)
         anchor_significant = anchor_significant,
         delete_marker_line = delete_marker_line,
         edits = edits,
-        -- Whole-file created/deleted: difftastic omits chunks entirely, so there
-        -- is no token detail to show. The preview needs to tell this apart from
-        -- "no tokens because the line was only reflowed" — the first means "we
-        -- have no information", the second means "we know nothing happened".
+        -- The preview must tell "no information" (whole-file created/deleted)
+        -- apart from "no tokens because the line only reflowed".
         no_token_detail = all,
       }
     end
@@ -149,11 +128,9 @@ end
 
 --- Is the sign on `lnum` (belonging to `v`) worth the user's attention?
 ---
---- Resolution order matters:
----   1. the deletion marker cell, which may be lit by reference-side content;
----   2. the line's own buffer-side verdict;
----   3. the anchor verdict, for signs on lines the hunk does not cover (a
----      `delete` hunk's marker sits on an untouched buffer line).
+--- Order matters: the deletion marker cell first (lit by reference-side
+--- content), then the line's own verdict, then the anchor verdict for signs on
+--- lines the hunk does not cover (a `delete` hunk's marker).
 --- @param v DifftSigns.Verdict
 --- @param lnum integer
 --- @return boolean
@@ -168,8 +145,8 @@ function M.is_significant(v, lnum)
   return v.anchor_significant
 end
 
---- The buffer line range a verdict's hunk occupies. A `delete` hunk adds no
---- lines, so it collapses to the single anchor line it is rendered against.
+--- Buffer line range a verdict's hunk occupies; a `delete` hunk collapses to
+--- its anchor line.
 --- @param v DifftSigns.Verdict
 --- @return integer first, integer last
 local function span_of(v)
@@ -180,7 +157,6 @@ local function span_of(v)
   return a.start, a.start + a.count - 1
 end
 
---- Verdicts sorted by buffer position.
 --- @param set DifftSigns.VerdictSet
 --- @return DifftSigns.Verdict[]
 local function sorted(set)
@@ -196,20 +172,13 @@ end
 
 --- Every verdict in the maximal run of CONTIGUOUS hunks containing `lnum`.
 ---
---- Why this exists. gitsigns computes hunks at zero context and, with
---- `diff_opts.linematch` on, performs a second-stage alignment that can split one
---- logical edit into several adjacent hunks. Observed in the wild: adding five
---- lines and altering the sixth became `add(363,5)` + `change(368,1)` — which git
---- itself reports as a single hunk once context is applied. The gutter does not
---- care (its verdict is per line, and correct either way), but a preview keyed to
---- one hunk then shows *different content on different lines of what the user
---- sees as one contiguous block of signs*.
+--- gitsigns diffs at zero context and, with `diff_opts.linematch`, can split
+--- one logical edit into adjacent hunks (observed: `add(363,5)` + `change(368,1)`
+--- for what git reports as one hunk). A preview keyed to one hunk then shows
+--- different content on different lines of one contiguous block of signs.
 ---
---- gitsigns solves this for staging with a `greedy` mode that re-runs the diff
---- without linematch. We deliberately do NOT use that: it would give us a second,
---- different hunk set from the one actually rendered, reintroducing the
---- geometry divergence this design exists to prevent. Grouping what we already
---- borrowed keeps one source of truth and is purely presentational.
+--- gitsigns' own fix (`greedy` mode, re-diffing without linematch) is not used:
+--- it would give a second hunk set different from the one rendered.
 ---
 --- @param set DifftSigns.VerdictSet
 --- @param lnum integer
@@ -223,8 +192,8 @@ function M.group_at_line(set, lnum)
   local hit = nil
   for i, v in ipairs(vs) do
     local first, last = span_of(v)
-    -- `lines[lnum] ~= nil` for covered lines; a delete hunk covers none, so also
-    -- accept its anchor and the line below it (where a topdelete cap lands).
+    -- A delete hunk covers no lines, so also accept its anchor and the line
+    -- below it (where a topdelete cap lands).
     if v.lines[lnum] ~= nil
       or (v.hunk.added.count == 0 and (lnum == first or lnum == first + 1))
       or (lnum >= first and lnum <= last)
@@ -262,8 +231,6 @@ function M.group_at_line(set, lnum)
   return group
 end
 
---- Count significant vs noise lines. For the status function (REDESIGN R6) and
---- for tests that want a one-line summary of a whole buffer.
 --- @param set DifftSigns.VerdictSet
 --- @return { significant: integer, noise: integer, hunks: integer }
 function M.summary(set)

@@ -1,8 +1,4 @@
---- debounce.lua
----
---- Trailing debounce + async throttle, after gitsigns' pattern. The debounce
---- turns "every keystroke" into "once you pause"; the throttle keeps the async
---- body from overlapping itself for one id.
+--- Trailing debounce + async throttle, after gitsigns' pattern.
 
 local M = {}
 
@@ -55,7 +51,6 @@ function M.throttle_by_id(fn)
   end
 end
 
---- Clear throttle bookkeeping for an id (on buffer detach).
 --- @param id any
 function M.forget(id)
   throttle_state[id] = nil
