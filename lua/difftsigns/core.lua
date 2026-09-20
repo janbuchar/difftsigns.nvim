@@ -94,15 +94,6 @@ local function classify_language(language)
   return false, nil
 end
 
---- @param n integer|nil  -- difftastic's 0-based line number
---- @return integer|nil   -- our 1-based line number
-local function to_one_based(n)
-  if n == nil then
-    return nil
-  end
-  return n + 1
-end
-
 --- @return DifftSigns.DiffResult
 local function empty_result(language, status)
   local fallback, reason = classify_language(language)
@@ -211,10 +202,10 @@ local function side_info(sd)
   if type(sd) ~= "table" then
     return nil, false
   end
-  local line = to_one_based(sd.line_number)
-  if line == nil then
+  if sd.line_number == nil then
     return nil, false
   end
+  local line = sd.line_number + 1 -- difftastic is 0-based
   return line, type(sd.changes) == "table" and #sd.changes > 0
 end
 

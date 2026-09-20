@@ -25,14 +25,12 @@ local overlay = require("difftsigns.overlay")
 local verdict = require("difftsigns.verdict")
 local debounce = require("difftsigns.debounce")
 
-local uv = vim.uv or vim.loop
-
 local M = {}
 
 --- @class DifftSigns.Attached
 --- @field bufnr      integer
 --- @field inflight   DifftSigns.Job|nil
---- @field scheduler  fun(bufnr: integer)
+--- @field scheduler  fun()
 --- @field timer      uv_timer_t
 --- @field last_error string|nil   -- de-duplicates error notifications
 local attached = {}
@@ -68,26 +66,6 @@ local function report(bufnr, msg)
   vim.notify(msg, vim.log.levels.WARN)
 end
 
---- Note a benign reason for having no overlay. Not an error: an unsupported
---- language or an oversized file is an expected outcome, and the user simply
---- keeps plain gitsigns (REDESIGN R6).
---- @param bufnr integer
---- @param reason string
-local function stand_down(bufnr, reason)
-  overlay.unavailable(bufnr, reason)
-end
-
---- Derive difftastic's language hint from the buffer's filetype.
---- @param bufnr integer
---- @return string|nil
-local function lang_of(bufnr)
-  local ft = vim.bo[bufnr].filetype
-  if ft == nil or ft == "" then
-    return nil
-  end
-  return ft
-end
-
 --- One update pass. Async body, throttled by buffer.
 --- @param bufnr integer
 --- @param done fun()
@@ -100,14 +78,14 @@ local function do_update(bufnr, done)
 
   local ok, reason = gs.available()
   if not ok then
-    stand_down(bufnr, reason or "gitsigns unavailable")
+    overlay.unavailable(bufnr, reason or "gitsigns unavailable")
     done()
     return
   end
 
   if not gs.attached(bufnr) then
     -- gitsigns is not tracking this buffer, so there are no cells to annotate.
-    stand_down(bufnr, "gitsigns is not attached to this buffer")
+    overlay.unavailable(bufnr, "gitsigns is not attached to this buffer")
     done()
     return
   end
@@ -115,14 +93,14 @@ local function do_update(bufnr, done)
   if not gs.signcolumn_enabled() then
     -- Our overrides are sign-based; with gitsigns' signcolumn off they would be
     -- invisible. Say so rather than appear broken (REDESIGN §6.5).
-    stand_down(bufnr, "gitsigns signcolumn is disabled; overlay has nothing to dim")
+    overlay.unavailable(bufnr, "gitsigns signcolumn is disabled; overlay has nothing to dim")
     done()
     return
   end
 
   local signs, hunks = gs.signs_for(bufnr)
   if signs == nil or hunks == nil then
-    stand_down(bufnr, "could not read gitsigns hunks (internals changed?)")
+    overlay.unavailable(bufnr, "could not read gitsigns hunks (internals changed?)")
     done()
     return
   end
@@ -151,7 +129,7 @@ local function do_update(bufnr, done)
     bytes = bytes + #l + 1
   end
   if bytes > config.values.max_filesize then
-    stand_down(bufnr, ("buffer exceeds max_filesize (%d bytes)"):format(bytes))
+    overlay.unavailable(bufnr, ("buffer exceeds max_filesize (%d bytes)"):format(bytes))
     done()
     return
   end
@@ -168,7 +146,7 @@ local function do_update(bufnr, done)
   end
 
   at.inflight = core.run_diff(ref, new_text, {
-    lang = lang_of(bufnr),
+    lang = vim.bo[bufnr].filetype,
     filename = vim.api.nvim_buf_get_name(bufnr),
     difft_cmd = config.values.difft_cmd,
     language_overrides = config.values.language_overrides,
@@ -178,7 +156,7 @@ local function do_update(bufnr, done)
 
     if err ~= nil then
       report(bufnr, err)
-      stand_down(bufnr, "difftastic failed")
+      overlay.unavailable(bufnr, "difftastic failed")
       done()
       return
     end
@@ -196,7 +174,7 @@ local function do_update(bufnr, done)
     if result.fallback then
       -- Say WHY, not just that. "difftastic hit its graph limit" is actionable
       -- (raise graph_limit); "no structural parser for this file type" is not.
-      stand_down(bufnr, result.fallback_reason
+      overlay.unavailable(bufnr, result.fallback_reason
         or ("difftastic could not diff %s structurally"):format(tostring(result.language)))
       done()
       return
@@ -204,7 +182,7 @@ local function do_update(bufnr, done)
 
     local set = verdict.compute(hunks, result)
     if set.unavailable then
-      stand_down(bufnr, "no structural verdict available")
+      overlay.unavailable(bufnr, "no structural verdict available")
       done()
       return
     end
@@ -221,9 +199,7 @@ end
 
 -- Throttled by bufnr so overlapping updates cannot interleave; at most one
 -- further run is queued while one is in flight, and stale intermediates drop.
-local throttled = debounce.throttle_by_id(function(bufnr, done)
-  do_update(bufnr, done)
-end)
+local throttled = debounce.throttle_by_id(do_update)
 
 --- Request an update immediately (still throttled).
 --- @param bufnr integer
@@ -238,7 +214,7 @@ function M.schedule(bufnr)
   bufnr = resolve(bufnr)
   local at = attached[bufnr]
   if at ~= nil then
-    at.scheduler(bufnr)
+    at.scheduler()
   end
 end
 
@@ -250,8 +226,8 @@ function M.attach(bufnr)
     return
   end
 
-  local scheduler, timer = debounce.debounce_trailing(config.values.debounce_ms, function(b)
-    M.update(b)
+  local scheduler, timer = debounce.debounce_trailing(config.values.debounce_ms, function()
+    M.update(bufnr)
   end)
 
   attached[bufnr] = {

@@ -56,7 +56,6 @@ require("difftsigns").setup({
   noise_hl       = "DifftSignsNoise",  -- highlight for demoted cells
   noise_text     = nil,           -- nil = mirror gitsigns' glyph; set a string to override
   priority_offset = 1,            -- added to gitsigns' sign_priority to win the cell
-  preview_context = 2,
   graph_limit    = nil,           -- difft --graph-limit; nil = difft's default (3,000,000)
   language_overrides = {},        -- { ["*.foo"] = "javascript" }
   difft_version_expected = "0.70.0",

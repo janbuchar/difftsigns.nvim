@@ -13,12 +13,8 @@ local gs = require("difftsigns.gitsigns")
 
 local M = {}
 
-local health = vim.health or require("health")
-local start = health.start or health.report_start
-local ok = health.ok or health.report_ok
-local warn = health.warn or health.report_warn
-local error_ = health.error or health.report_error
-local info = health.info or health.report_info
+local health = vim.health
+local start, ok, warn, error_, info = health.start, health.ok, health.warn, health.error, health.info
 
 local function check_difft()
   start("difftsigns: difftastic")
@@ -73,7 +69,6 @@ local function check_gitsigns()
     return
   end
   ok("gitsigns is present and its API is readable")
-  info("gitsigns version: " .. tostring(gs.version()))
 
   if gs.signcolumn_enabled() then
     ok(("sign priority %d; overlay places at %d"):format(

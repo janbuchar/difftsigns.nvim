@@ -168,28 +168,6 @@ function M.is_significant(v, lnum)
   return v.anchor_significant
 end
 
---- Which hunk owns a given buffer line? Used by the preview to answer "what is
---- under the cursor". Falls back to proximity for `delete` hunks, whose marker
---- sits on a line they do not technically cover.
---- @param set DifftSigns.VerdictSet
---- @param lnum integer
---- @return DifftSigns.Verdict|nil
-function M.at_line(set, lnum)
-  for _, v in ipairs(set.verdicts or {}) do
-    if v.lines[lnum] ~= nil then
-      return v
-    end
-  end
-  -- Delete hunks cover no buffer lines; match their anchor instead.
-  for _, v in ipairs(set.verdicts or {}) do
-    local a = v.hunk.added
-    if a.count == 0 and (lnum == a.start or lnum == a.start + 1) then
-      return v
-    end
-  end
-  return nil
-end
-
 --- The buffer line range a verdict's hunk occupies. A `delete` hunk adds no
 --- lines, so it collapses to the single anchor line it is rendered against.
 --- @param v DifftSigns.Verdict

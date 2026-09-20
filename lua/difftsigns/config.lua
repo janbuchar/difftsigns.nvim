@@ -20,7 +20,6 @@ local M = {}
 --- @field noise_hl               string   -- highlight for demoted (noise) cells
 --- @field noise_text             string|nil -- glyph override; nil = mirror gitsigns'
 --- @field priority_offset        integer  -- added to gitsigns' sign_priority
---- @field preview_context        integer  -- context lines around each change in the preview
 --- @field language_overrides     table<string,string>  -- glob:lang for difft --override
 --- @field difft_version_expected string   -- pin; warn on mismatch
 --- @field on_attach              fun(bufnr: integer)|nil
@@ -74,8 +73,6 @@ M.defaults = {
   -- (conventionally 10+). gitsigns defaults to 6, so +1 lands at 7.
   priority_offset = 1,
 
-  preview_context = 2,
-
   language_overrides = {},
 
   -- difftastic's JSON is explicitly unstable; the only honest way to cope is to
@@ -101,7 +98,6 @@ local function validate(cfg)
     vim.validate("noise_hl", cfg.noise_hl, "string")
     vim.validate("noise_text", cfg.noise_text, "string", true)
     vim.validate("priority_offset", cfg.priority_offset, "number")
-    vim.validate("preview_context", cfg.preview_context, "number")
     vim.validate("language_overrides", cfg.language_overrides, "table")
     vim.validate("difft_version_expected", cfg.difft_version_expected, "string")
     vim.validate("on_attach", cfg.on_attach, "function", true)
@@ -114,9 +110,6 @@ local function validate(cfg)
     end
     if cfg.graph_limit ~= nil and cfg.graph_limit < 1 then
       error("graph_limit must be >= 1")
-    end
-    if cfg.preview_context < 0 then
-      error("preview_context must be >= 0")
     end
     -- A non-positive offset would tie or lose against gitsigns, and extmark
     -- tie-breaking is not something to leave to chance: the overlay would

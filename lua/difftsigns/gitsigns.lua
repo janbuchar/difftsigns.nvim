@@ -51,11 +51,8 @@ function M.available()
   if try_require("gitsigns.cache") == nil then
     return false, "gitsigns.cache is unavailable (gitsigns internals changed?)"
   end
-  if try_require("gitsigns.hunks") == nil then
-    return false, "gitsigns.hunks is unavailable (gitsigns internals changed?)"
-  end
   local hunks = try_require("gitsigns.hunks")
-  if type(hunks.calc_signs) ~= "function" then
+  if hunks == nil or type(hunks.calc_signs) ~= "function" then
     return false, "gitsigns.hunks.calc_signs is missing (gitsigns internals changed?)"
   end
   return true, nil
@@ -108,19 +105,9 @@ function M.reference_text(bufnr)
   return text
 end
 
---- Derive `vend` for a hunk that lacks it (i.e. one from the public API).
---- @param h table
-local function ensure_vend(h)
-  if h.vend == nil and type(h.added) == "table" then
-    h.vend = h.added.start + math.max(h.added.count - 1, 0)
-  end
-  return h
-end
-
---- The unstaged hunks gitsigns computed for this buffer.
----
---- Prefers the cache (its hunks carry `vend`, which `calc_signs` needs) and
---- falls back to the public API with a derived `vend`.
+--- The unstaged hunks gitsigns computed for this buffer. Taken from the cache
+--- rather than the public `get_hunks`: same list, but the cache's carry `vend`,
+--- which `calc_signs` needs.
 ---
 --- Staged hunks are deliberately NOT handled: gitsigns diffs those against a
 --- different base (`compare_text_head`), so judging them would require a second
@@ -132,20 +119,7 @@ function M.hunks(bufnr)
   if entry ~= nil and type(entry.hunks) == "table" then
     return entry.hunks
   end
-
-  -- Fallback: the public API. Same geometry, minus `vend`.
-  local gs = try_require("gitsigns")
-  if gs == nil or type(gs.get_hunks) ~= "function" then
-    return nil
-  end
-  local ok, hunks = pcall(gs.get_hunks, bufnr)
-  if not ok or type(hunks) ~= "table" then
-    return nil
-  end
-  for _, h in ipairs(hunks) do
-    ensure_vend(h)
-  end
-  return hunks
+  return nil
 end
 
 --- Every sign gitsigns would place in this buffer, with the hunk each came from.
@@ -181,7 +155,6 @@ function M.signs_for(bufnr)
 
   local out = {}
   for i, h in ipairs(hunks) do
-    ensure_vend(h)
     local ok, signs = pcall(H.calc_signs, hunks[i - 1], h, hunks[i + 1], 1, math.huge, untracked)
     if ok and type(signs) == "table" then
       for _, s in ipairs(signs) do
@@ -237,20 +210,6 @@ function M.signcolumn_enabled()
     return true -- unknown; assume yes rather than disable ourselves
   end
   return cfg.signcolumn ~= false
-end
-
---- gitsigns version string, for :checkhealth. gitsigns exposes no version API,
---- so this is best-effort and purely informational.
---- @return string|nil
-function M.version()
-  local gs = try_require("gitsigns")
-  if gs == nil then
-    return nil
-  end
-  if type(gs._VERSION) == "string" then
-    return gs._VERSION
-  end
-  return "unknown (gitsigns exposes no version)"
 end
 
 return M

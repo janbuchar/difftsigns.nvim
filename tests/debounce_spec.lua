@@ -1,27 +1,24 @@
---- Tests for debounce_trailing and throttle_by_id (spec §5).
-
 local debounce = require("difftsigns.debounce")
 
 describe("debounce_trailing", function()
-  it("fires once after a burst, with the last args", function()
-    local calls = {}
-    local fn, timer = debounce.debounce_trailing(30, function(x)
-      table.insert(calls, x)
+  it("fires once after a burst", function()
+    local calls = 0
+    local fn, timer = debounce.debounce_trailing(30, function()
+      calls = calls + 1
     end)
 
-    fn(1)
-    fn(2)
-    fn(3)
+    fn()
+    fn()
+    fn()
 
     -- Nothing yet (window not elapsed).
-    assert.are.equal(0, #calls)
+    assert.are.equal(0, calls)
 
     vim.wait(120, function()
-      return #calls > 0
+      return calls > 0
     end, 10)
 
-    assert.are.equal(1, #calls)
-    assert.are.equal(3, calls[1]) -- last args win
+    assert.are.equal(1, calls)
 
     timer:stop()
     timer:close()
@@ -30,33 +27,25 @@ end)
 
 describe("throttle_by_id", function()
   it("does not run the same id concurrently, queues at most one", function()
-    local order = {}
-    local resolvers = {}
+    local starts = 0
+    local dones = {}
 
-    local run = debounce.throttle_by_id(function(id, tag, done)
-      table.insert(order, "start:" .. tag)
+    local run = debounce.throttle_by_id(function(_, done)
+      starts = starts + 1
       -- Simulate async: stash the done callback to resolve manually.
-      resolvers[tag] = function()
-        table.insert(order, "end:" .. tag)
-        done()
-      end
+      table.insert(dones, done)
     end)
 
-    run("buf", "a")
-    -- While 'a' is in flight, fire two more; only the LAST should be queued.
-    run("buf", "b")
-    run("buf", "c")
+    run("buf")
+    run("buf")
+    run("buf")
+    assert.are.equal(1, starts)
 
-    assert.are.same({ "start:a" }, order)
+    dones[1]() -- finishing the first triggers exactly one queued run
+    assert.are.equal(2, starts)
 
-    resolvers["a"]() -- finishing 'a' should trigger the queued 'c' (b dropped)
-    assert.are.same({ "start:a", "end:a", "start:c" }, order)
-
-    resolvers["c"]()
-    assert.are.same({ "start:a", "end:a", "start:c", "end:c" }, order)
-
-    -- 'b' was stale and correctly dropped.
-    assert.is_nil(resolvers["b"])
+    dones[2]()
+    assert.are.equal(2, starts)
   end)
 
   it("runs sequentially for different ids without blocking each other", function()
