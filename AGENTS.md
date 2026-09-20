@@ -1,0 +1,70 @@
+# difftsigns.nvim — notes for agents
+
+Structural-significance annotator for gitsigns: reads gitsigns' hunks and reference
+text, asks difftastic which lines changed structurally, dims the rest in gitsigns'
+own gutter cells. User-facing behaviour is in `README.md`; this file is what you
+need to not break it.
+
+## Test
+
+```sh
+make test
+```
+
+Headless plenary. Needs `difft` (pinned `0.70.0`, see `config.lua`) and gitsigns
+on the runtimepath (`tests/minimal_init.lua`). Fixtures under `tests/fixtures/`
+are captured real difft output — never hand-edit them; recapture.
+
+## Rules
+
+- **Subtract emphasis, never add it.** Only cells gitsigns drew may be touched.
+  Never place a sign on a line gitsigns left alone.
+- **When in doubt, do nothing.** A missing overlay is cosmetic; a wrong overlay
+  hides a real change. Every ambiguity resolves toward leaving the cell lit, and
+  a line diff must never be presented as a structural verdict.
+- **The hunk is borrowed, not re-modelled.** `Verdict.hunk` is gitsigns' table
+  passed through; read fields off it, never copy it into a type of our own.
+
+## Layout and boundaries
+
+- `core.lua` is the only file that knows difftastic's JSON schema.
+- `gitsigns.lua` is the only file that knows gitsigns' API. It uses internals
+  (`gitsigns.cache`, `gitsigns.hunks.calc_signs`); every access is wrapped and a
+  missing piece makes the plugin go inert, not wrong.
+- `verdict.lua` is pure: hunks and difft output in, `Verdict[]` out. No vim API,
+  no IO, no subprocess. Keep it that way — it is where the hard logic lives and
+  must stay the cheapest file to test.
+- `process.lua` spawns difft (`vim.system`), owns tempfiles and cancellation.
+- `attach.lua` is driven by `User GitSignsUpdate`, not `nvim_buf_attach`. It
+  captures `changedtick` before the run and drops the result if it moved.
+
+## Things paid for in debugging time
+
+- difftastic's JSON line numbers are 0-based; `core.lua` normalises to 1-based.
+- `unchanged`/`created`/`deleted` statuses omit `chunks` entirely.
+- `--display json` needs `DFT_UNSTABLE=yes`; exit codes 0 and 1 are both success.
+- Tempfiles must carry the source extension or difft reports `Text`.
+- Fallback is detected by the `exceeded DFT_*` substring, never the whole
+  language string, plus a shape check: a whitespace-only token outside a
+  `comment`/`string` atom means a line diff wearing a language label.
+- `changed_lhs` and `changed_rhs` are two views of one aligned position. A token
+  change on either side lights the line on both, or a deleted argument on a
+  reindented line gets dimmed.
+- Ephemeral extmarks do not render `sign_text`. All signs are real extmarks.
+- `nvim_buf_set_extmark` defaults `priority` to 4096 and precedence is by
+  priority alone, never placement order. Always set it explicitly.
+- The preview renders the contiguous *group* of hunks (`verdict.group_at_line`),
+  because linematch can split one edit into adjacent hunks. A zero-count hunk
+  side is an insertion point, not a line; only counted sides set a range start.
+- The float is anchored with `bufpos` and re-sided on `WinScrolled`, which tests
+  must fire themselves.
+- gitsigns' `greedy` hunk mode, own `git show`/`vim.diff`, and reading gitsigns'
+  placed extmarks were all rejected: each yields a second hunk set that can
+  diverge from the one rendered.
+
+## Tests
+
+Assert the observable outcome, not bookkeeping: `screenstring` for the gutter,
+extmark queries for the preview, a real repo + real gitsigns + real difft for
+integration. `attach.lua` gets tests like everything else, and errors are
+surfaced, not swallowed.

@@ -282,11 +282,6 @@ noisy as it does today.
 make test
 ```
 
-118 tests: fixture-driven parsing (every fixture is captured real difft output),
-the pure verdict join, on-screen gutter assertions via `screenstring`, and
-end-to-end tests against a real git repo, real gitsigns, and the real difft
-binary.
-
-Design history lives in `REDESIGN.md` (current), with `INITIAL_DESIGN.md` and
-`IMPLEMENTATION.md` kept as the record of an earlier, different plugin that drew
-its own gutter — and why that turned out to be the wrong idea.
+Fixture-driven parsing (every fixture is captured real difft output), the pure
+verdict join, on-screen gutter assertions via `screenstring`, and end-to-end
+tests against a real git repo, real gitsigns, and the real difft binary.
