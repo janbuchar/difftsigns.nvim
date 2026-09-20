@@ -1,28 +1,18 @@
 --- process.lua
 ---
---- libuv spawn of difftastic with cancellation and temp-file writing (REDESIGN §7).
---- Together with core.lua this is the only place that knows difft exists as a
---- subprocess. Everything is quarantined here so the schema/CLI can change in
---- exactly two files.
-
-local uv = vim.uv or vim.loop
+--- Spawns difftastic with cancellation and temp-file writing. Together with
+--- core.lua this is the only place that knows difft exists as a subprocess.
 
 local M = {}
 
---- Handle to an in-flight difft run so the caller can cancel it (REDESIGN §7:
---- "kill the in-flight job rather than queue a stale result").
+--- Handle to an in-flight difft run so the caller can cancel it.
 --- @class DifftSigns.Job
 --- @field cancel fun()
 
---- Write an array of lines to a fresh temp file. Returns the path.
---- Mirrors gitsigns' diff_ext.lua approach: difft diffs files, not strings.
----
---- We preserve the original file's EXTENSION on the tempfile. difftastic infers
---- the language from the path; a bare `tempname()` has no extension, so difft
---- detects "Text" and silently falls back to a line diff — exactly the mislabel
---- we refuse to render (REDESIGN §7). Suffixing with the real extension lets
---- difft's own detection work even when the caller supplies no explicit `lang`
---- (e.g. filetype not set yet).
+--- difft diffs files, not strings, and infers the language from the path: a bare
+--- `tempname()` has no extension, so difft detects "Text" and silently falls back
+--- to a line diff. Keep the source extension so its own detection works even when
+--- the caller supplies no explicit `lang`.
 --- @param lines string[]
 --- @param ext string|nil  -- extension WITHOUT the dot, e.g. "rs"
 --- @return string|nil path
@@ -32,47 +22,24 @@ local function write_tempfile(lines, ext)
   if ext ~= nil and ext ~= "" then
     path = path .. "." .. ext
   end
-  local fd, open_err = uv.fs_open(path, "w", 384) -- 0600
-  if fd == nil then
-    return nil, "difftsigns: could not open tempfile: " .. tostring(open_err)
+  if vim.fn.writefile(lines, path) ~= 0 then
+    return nil, "difftsigns: could not write tempfile " .. path
   end
-
-  local data = table.concat(lines, "\n")
-  -- difft, like most line tools, is happier with a trailing newline.
-  if #lines > 0 then
-    data = data .. "\n"
-  end
-
-  local ok_write, write_err = uv.fs_write(fd, data, 0)
-  uv.fs_close(fd)
-  if ok_write == nil then
-    return nil, "difftsigns: could not write tempfile: " .. tostring(write_err)
-  end
-
   return path, nil
 end
 
---- Build the argv for difft. Language overrides use difft's --override glob
---- syntax: '<glob>:<lang>'.
 --- @param old_path string
 --- @param new_path string
 --- @param opts table
 --- @return string[]
-local function build_args(old_path, new_path, opts)
-  local args = {
-    "--display", "json",
-    "--color", "never",
-  }
+local function build_cmd(cmd, old_path, new_path, opts)
+  local args = { cmd, "--display", "json", "--color", "never" }
 
   if opts.lang ~= nil and opts.lang ~= "" then
-    -- Force a language for both temp paths. We match on the tempfile basenames.
-    -- A blanket '*:<lang>' override is simplest and unambiguous here since these
-    -- are throwaway files.
+    -- Blanket override: both paths are throwaway tempfiles.
     table.insert(args, "--override=*:" .. opts.lang)
   end
 
-  -- Bound difftastic's worst case explicitly when asked. Left off entirely by
-  -- default so difftastic's own tuning applies.
   if type(opts.graph_limit) == "number" then
     table.insert(args, "--graph-limit")
     table.insert(args, tostring(math.floor(opts.graph_limit)))
@@ -93,15 +60,13 @@ end
 ---
 --- @param old_text string[]
 --- @param new_text string[]
---- @param opts { lang?: string, filename?: string, difft_cmd?: string, language_overrides?: table }
+--- @param opts { lang?: string, filename?: string, difft_cmd?: string, language_overrides?: table, graph_limit?: number }
 --- @param callback fun(err: string|nil, json_str: string|nil)
---- @return DifftSigns.Job|nil job  -- handle for cancellation, nil if spawn failed synchronously
+--- @return DifftSigns.Job|nil job  -- nil if spawn failed synchronously
 function M.run(old_text, new_text, opts, callback)
   opts = opts or {}
   local cmd = opts.difft_cmd or "difft"
 
-  -- Derive an extension from the caller's filename so difft's own language
-  -- detection works without an explicit --override (REDESIGN §7).
   local ext = nil
   if opts.filename ~= nil and opts.filename ~= "" then
     ext = opts.filename:match("%.([%w_]+)$")
@@ -115,125 +80,52 @@ function M.run(old_text, new_text, opts, callback)
 
   local new_path, new_err = write_tempfile(new_text, ext)
   if new_path == nil then
-    uv.fs_unlink(old_path)
+    vim.fn.delete(old_path)
     callback(new_err, nil)
     return nil
   end
 
-  local args = build_args(old_path, new_path, opts)
-
-  local stdout = assert(uv.new_pipe(false))
-  local stderr = assert(uv.new_pipe(false))
-  local stdout_chunks = {}
-  local stderr_chunks = {}
-
-  local handle
-  local cancelled = false
-  local finished = false
-
   local function cleanup()
-    uv.fs_unlink(old_path)
-    uv.fs_unlink(new_path)
+    vim.fn.delete(old_path)
+    vim.fn.delete(new_path)
   end
 
-  local function finish(err, json_str)
-    if finished then
-      return
-    end
-    finished = true
-    cleanup()
-    -- Hop back onto the main loop; libuv exit callbacks run in a fast context
-    -- where most Neovim API calls are forbidden.
+  local cancelled = false
+  local ok, proc = pcall(vim.system, build_cmd(cmd, old_path, new_path, opts), {
+    text = true,
+    -- --display json is gated behind DFT_UNSTABLE=yes.
+    env = { DFT_UNSTABLE = "yes" },
+  }, function(res)
+    -- on_exit runs in libuv's fast context; cleanup is uv-safe, the callback is not.
     vim.schedule(function()
+      cleanup()
       if cancelled then
         return
       end
-      callback(err, json_str)
-    end)
-  end
-
-  local spawn_opts = {
-    args = args,
-    stdio = { nil, stdout, stderr },
-    -- --display json is gated behind DFT_UNSTABLE=yes; we set it ourselves so
-    -- the user never has to (REDESIGN §7).
-    env = (function()
-      local env = {}
-      for k, v in pairs(uv.os_environ and uv.os_environ() or {}) do
-        table.insert(env, k .. "=" .. v)
+      -- With --display json a successful run exits 0 or 1 ("files differ").
+      -- Anything else (notably 2 = the DFT_UNSTABLE gate, or a crash) is an error.
+      if res.code ~= 0 and res.code ~= 1 then
+        callback("difftsigns: difft exited with code " .. res.code .. ": " .. (res.stderr or ""), nil)
+        return
       end
-      table.insert(env, "DFT_UNSTABLE=yes")
-      return env
-    end)(),
-  }
-
-  handle = uv.spawn(cmd, spawn_opts, function(code, _signal)
-    if not stdout:is_closing() then
-      stdout:close()
-    end
-    if not stderr:is_closing() then
-      stderr:close()
-    end
-    if handle ~= nil and not handle:is_closing() then
-      handle:close()
-    end
-
-    if cancelled then
-      cleanup()
-      finished = true
-      return
-    end
-
-    -- difft exits non-zero for its own reasons; code 1 simply means "files
-    -- differ" in some modes, but with --display json a successful run is 0 or 1.
-    -- Anything else (notably 2 = the DFT_UNSTABLE gate, or a crash) is an error.
-    if code ~= 0 and code ~= 1 then
-      finish("difftsigns: difft exited with code " .. code .. ": " .. table.concat(stderr_chunks), nil)
-      return
-    end
-
-    finish(nil, table.concat(stdout_chunks))
+      callback(nil, res.stdout or "")
+    end)
   end)
 
-  if handle == nil then
-    stdout:close()
-    stderr:close()
+  if not ok then
     cleanup()
-    callback("difftsigns: failed to spawn '" .. cmd .. "' (is difftastic installed?)", nil)
+    callback(("difftsigns: failed to spawn '%s' (is difftastic installed?): %s"):format(cmd, tostring(proc)), nil)
     return nil
   end
 
-  stdout:read_start(function(err, data)
-    if err then
-      return
-    end
-    if data then
-      table.insert(stdout_chunks, data)
-    end
-  end)
-
-  stderr:read_start(function(err, data)
-    if err then
-      return
-    end
-    if data then
-      table.insert(stderr_chunks, data)
-    end
-  end)
-
   return {
     cancel = function()
-      if finished or cancelled then
+      if cancelled then
         return
       end
       cancelled = true
-      if handle ~= nil and not handle:is_closing() then
-        -- SIGTERM the in-flight difft; stale structural diffs are worse than
-        -- absent ones (REDESIGN §7).
-        pcall(function()
-          handle:kill("sigterm")
-        end)
-      end
+      -- Stale structural diffs are worse than absent ones.
+      pcall(proc.kill, proc, "sigterm")
     end,
   }
 end
