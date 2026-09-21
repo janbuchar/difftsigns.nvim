@@ -391,9 +391,11 @@ function M.show(bufnr, winid)
 
   open_float = float
 
-  -- Dismiss only when the cursor LEAVES the position we opened at. gitsigns'
-  -- async nav_hunk emits trailing CursorMoved events at the new position, so a
-  -- `once` autocmd would close a `]c` re-show immediately.
+  -- Ignore CursorMoved that lands on the position we opened at: gitsigns' async
+  -- nav_hunk emits trailing ones there, so a `once` autocmd would close a `]c`
+  -- re-show immediately. A real move follows the cursor onto another hunk group
+  -- (that is what makes plain `]c` keep the preview) and closes only when the
+  -- cursor leaves the signs.
   local anchor_win = winid
   local anchor_pos = vim.api.nvim_win_get_cursor(winid)
 
@@ -416,10 +418,20 @@ function M.show(bufnr, winid)
         return true
       end
       local cur = vim.api.nvim_win_get_cursor(anchor_win)
-      if cur[1] ~= anchor_pos[1] or cur[2] ~= anchor_pos[2] then
+      if cur[1] == anchor_pos[1] and cur[2] == anchor_pos[2] then
+        return
+      end
+      local now = overlay.verdicts(bufnr)
+      local next_group = now and verdict.group_at_line(now, cur[1]) or {}
+      if #next_group == 0 then
         dismiss()
         return true
       end
+      if next_group[1] ~= group[1] then
+        M.show(bufnr, winid)
+        return true
+      end
+      anchor_pos = cur
     end,
   })
 

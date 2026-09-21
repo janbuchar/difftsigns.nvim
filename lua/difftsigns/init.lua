@@ -173,13 +173,6 @@ function M.preview()
   return require("difftsigns.preview").show()
 end
 
---- Whether a preview float is currently on screen, so a `]c`/`[c` mapping can
---- re-show it after navigating instead of letting the cursor move dismiss it.
---- @return boolean
-function M.preview_is_open()
-  return require("difftsigns.preview").is_open()
-end
-
 --- Toggle the overlay for the current buffer.
 function M.toggle()
   return overlay.toggle(vim.api.nvim_get_current_buf())

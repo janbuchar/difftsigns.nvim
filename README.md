@@ -165,33 +165,9 @@ Bind it *instead of* `gitsigns.preview_hunk`:
 vim.keymap.set("n", "<leader>hp", require("difftsigns").preview)
 ```
 
-### Advancing the preview with `]c`
-
-The preview dismisses when the cursor leaves the hunk, like gitsigns' own popup.
-To make `]c` *advance* the preview to the next hunk — keeping it open, the way
-gitsigns does with its own preview — re-show it once the jump lands.
-`gitsigns.nav_hunk` is async and takes a callback that fires after the cursor has
-moved (a bare `vim.schedule` races it), and `preview_is_open()` says whether a
-preview was up to begin with:
-
-```lua
-local gs = require("gitsigns")
-
-local function nav(direction)
-  return function()
-    local ok, dts = pcall(require, "difftsigns")
-    local reopen = ok and dts.preview_is_open()
-    gs.nav_hunk(direction, {}, function()
-      if reopen then
-        dts.preview()
-      end
-    end)
-  end
-end
-
-vim.keymap.set("n", "]c", nav("next"))
-vim.keymap.set("n", "[c", nav("prev"))
-```
+The preview follows the cursor: land on another hunk (`]c`, a search, a jump) and
+it re-shows for that hunk; move off the signs and it closes. No navigation
+bindings need to know about it.
 
 ## Commands
 

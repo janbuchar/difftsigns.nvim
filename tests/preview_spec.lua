@@ -753,10 +753,9 @@ describe("preview window", function()
     vim.api.nvim_buf_delete(buf, { force = true })
   end)
 
-  -- A `]c` that keeps the preview open re-shows it after navigating. Two things
-  -- must hold or that mapping breaks: is_open() must report an open float, and a
-  -- re-show must supersede the previous float rather than leak a second one that
-  -- then dismisses the new one on its own pending CursorMoved.
+  -- Following the cursor onto another hunk re-shows the preview. The re-show
+  -- must supersede the previous float rather than leak a second one that then
+  -- dismisses the new one on its own pending CursorMoved.
   it("re-showing supersedes the open float instead of leaking one", function()
     local overlay = require("difftsigns.overlay")
     config.setup({})
@@ -823,6 +822,49 @@ describe("preview window", function()
     assert.is_false(vim.api.nvim_win_is_valid(float),
       "a real move off the anchor must dismiss the preview")
     assert.is_false(preview.is_open())
+
+    overlay.forget(buf)
+    vim.api.nvim_win_close(win, true)
+    vim.api.nvim_buf_delete(buf, { force = true })
+  end)
+
+  -- Plain `]c` must keep the preview without a wrapper mapping: a move that
+  -- lands on another hunk group re-shows for that group instead of closing.
+  it("follows the cursor onto another hunk, closes when it leaves the signs", function()
+    local overlay = require("difftsigns.overlay")
+    config.setup({})
+    local buf = buf_with({ "const a = 1;", "const b = 2;", "const c = 3;", "const d = 4;",
+      "const e = 5;", "  return x * 3;", "}" })
+    local win = vim.api.nvim_open_win(buf, true, {
+      relative = "editor", row = 0, col = 0, width = 60, height = 10,
+    })
+    local set = verdict.compute({
+      { type = "change", added = { start = 2, count = 1 }, removed = { start = 2, count = 1 } },
+      { type = "change", added = { start = 6, count = 1 }, removed = { start = 6, count = 1 } },
+    }, fixture("single_token"))
+    overlay.apply(buf, set, {}, { "a", "b", "c", "d", "e", "  return x * 2;", "}" })
+    vim.api.nvim_win_set_cursor(win, { 2, 0 })
+
+    local first = preview.show(buf, win)
+    assert.is_not_nil(first)
+    local function header()
+      for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+        if vim.api.nvim_win_get_config(w).relative == "win" then
+          return vim.api.nvim_buf_get_lines(vim.api.nvim_win_get_buf(w), 0, 1, false)[1]
+        end
+      end
+    end
+    assert.is_truthy(header():find("@@ %-2,1 %+2,1 @@"), header())
+
+    vim.api.nvim_win_set_cursor(win, { 6, 0 })
+    vim.api.nvim_exec_autocmds("CursorMoved", { buffer = buf })
+    assert.is_true(preview.is_open(), "landing on another hunk must keep a preview open")
+    assert.is_false(vim.api.nvim_win_is_valid(first), "the previous float must be superseded")
+    assert.is_truthy(header():find("@@ %-6,1 %+6,1 @@"), header())
+
+    vim.api.nvim_win_set_cursor(win, { 4, 0 })
+    vim.api.nvim_exec_autocmds("CursorMoved", { buffer = buf })
+    assert.is_false(preview.is_open(), "leaving the signs must dismiss the preview")
 
     overlay.forget(buf)
     vim.api.nvim_win_close(win, true)
