@@ -385,6 +385,12 @@ function M.show(bufnr, winid)
   })
 
   vim.wo[float].signcolumn = "yes:1"
+  -- A header wider than the float would wrap and push the last line out of view.
+  vim.wo[float].wrap = false
+  -- Regex syntax groups with no attributes (yats' `typescriptParenExp`) render
+  -- with the global Normal background, boxing parenthesised text in schemes
+  -- where NormalFloat differs from Normal.
+  vim.wo[float].winhighlight = "Normal:NormalFloat"
 
   open_float = float
 

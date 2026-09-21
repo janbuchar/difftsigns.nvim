@@ -9,17 +9,7 @@ difftsigns asks [difftastic](https://github.com/Wilfred/difftastic) which of tho
 lines changed *structurally* and dims the rest — in the same column, with the same
 glyphs, using your existing `]c` navigation.
 
-```
- gitsigns alone          with difftsigns
- ──────────────          ───────────────
- ▎ function run() {      ▎ function run() {
- ▎   if (enabled) {      ▎   if (enabled) {     <- real: new structure
- ▎     doThing();        ▏     doThing();       <- dimmed: only reindented
- ▎     doOther();        ▏     doOther();       <- dimmed
- ▎     return 1;         ▏     return 1;        <- dimmed
- ▎   }                   ▎   }                  <- real: new structure
- ▎ }                     ▎ }
-```
+![plain gitsigns, then the same hunk with difftsigns, then the preview](demo/demo.gif)
 
 It adds **no gutter column**, **no navigation bindings**, and **no new mental
 model**. It changes the colour of things you were already looking at.
@@ -256,9 +246,6 @@ noisy as it does today.
 ## Development
 
 ```sh
-make test
+make test   # plenary suite: fixtures, pure verdict join, screenstring gutter asserts, end-to-end
+make demo   # re-render demo/demo.gif (needs docker)
 ```
-
-Fixture-driven parsing (every fixture is captured real difft output), the pure
-verdict join, on-screen gutter assertions via `screenstring`, and end-to-end
-tests against a real git repo, real gitsigns, and the real difft binary.
