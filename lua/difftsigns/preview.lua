@@ -10,6 +10,7 @@
 local config = require("difftsigns.config")
 local overlay = require("difftsigns.overlay")
 local verdict = require("difftsigns.verdict")
+local gs = require("difftsigns.gitsigns")
 
 local M = {}
 
@@ -272,17 +273,13 @@ function M.show(bufnr, winid)
     open_float = nil
   end
 
+  -- No structural answer here (inert buffer, or no hunk we know of): hand over
+  -- to gitsigns' preview so a `<leader>hp` bound to us still previews something.
   local set = overlay.verdicts(bufnr)
-  if set == nil then
-    local reason = overlay.status(bufnr)
-    vim.notify(reason or "difftsigns: no structural verdict for this buffer", vim.log.levels.INFO)
-    return nil
-  end
-
   local cursor = vim.api.nvim_win_get_cursor(winid)[1]
-  local group = verdict.group_at_line(set, cursor)
+  local group = set and verdict.group_at_line(set, cursor) or {}
   if #group == 0 then
-    vim.notify("difftsigns: no hunk under the cursor", vim.log.levels.INFO)
+    gs.preview_hunk()
     return nil
   end
 

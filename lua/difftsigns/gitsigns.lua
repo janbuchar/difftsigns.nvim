@@ -45,6 +45,14 @@ function M.available()
   return true, nil
 end
 
+--- gitsigns' own line-based preview, for lines we have no structural verdict on.
+function M.preview_hunk()
+  local gitsigns = try_require("gitsigns")
+  if gitsigns ~= nil and type(gitsigns.preview_hunk) == "function" then
+    gitsigns.preview_hunk()
+  end
+end
+
 --- @param bufnr integer
 --- @return table|nil
 local function cache_entry(bufnr)

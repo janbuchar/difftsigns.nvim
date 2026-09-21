@@ -159,7 +159,8 @@ edit into several adjacent ones, so keying the preview to one hunk would show
 different content on different lines of one unbroken block of signs. The header
 discloses when hunks were merged, e.g. `add+change @@ -363,1 +363,6 @@ (2 hunks)`.
 
-Bind it *instead of* `gitsigns.preview_hunk`:
+Bind it *instead of* `gitsigns.preview_hunk`; where difftsigns has no structural
+verdict (inert buffer, unsupported language) it hands over to gitsigns' preview:
 
 ```lua
 vim.keymap.set("n", "<leader>hp", require("difftsigns").preview)

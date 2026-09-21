@@ -252,6 +252,23 @@ describe("difftsigns end to end", function()
     assert.are.same({}, dimmed(bufnr))
     local st = overlay._state(bufnr)
     assert.is_not_nil(st.reason, "the reason for standing down must be queryable")
+
+    -- With nothing structural to say, preview() hands over to gitsigns' popup.
+    vim.api.nvim_win_set_cursor(0, { 2, 0 })
+    assert.is_nil(require("difftsigns").preview())
+    local popup
+    vim.wait(2000, function()
+      for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+        if vim.api.nvim_win_get_config(w).relative ~= "" then
+          popup = w
+        end
+      end
+      return popup ~= nil
+    end)
+    assert.is_not_nil(popup, "gitsigns' preview must open in our place")
+    local text = table.concat(vim.api.nvim_buf_get_lines(vim.api.nvim_win_get_buf(popup), 0, -1, false), "\n")
+    assert.is_truthy(text:find("BETA", 1, true), "popup shows gitsigns' line diff: " .. text)
+    vim.api.nvim_win_close(popup, true)
   end)
 
   it("reports a reason instead of failing silently when it cannot help", function()
