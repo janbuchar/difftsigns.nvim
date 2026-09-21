@@ -185,19 +185,28 @@ function M.group_at_line(set, lnum)
     return {}
   end
 
-  local hit = nil
+  -- Ownership first, the loose anchor only as a fallback. A delete's sign sits
+  -- ON its anchor line, so with two deletes one line apart the line between
+  -- them is claimed by both: as the lower one's anchor and as the upper one's
+  -- L+1. It belongs to the lower one — that is the hunk whose sign cell it is,
+  -- and the one gitsigns' own `find_hunk` returns. Only a topdelete, whose sign
+  -- gitsigns pushes one row down, needs the loose match.
+  local hit, loose = nil, nil
   for i, v in ipairs(vs) do
     local first, last = span_of(v)
-    -- A delete hunk covers no lines, so also accept its anchor and the line
-    -- below it (where a topdelete cap lands).
+    local delete = v.hunk.added.count == 0
     if v.lines[lnum] ~= nil
-      or (v.hunk.added.count == 0 and (lnum == v.hunk.added.start or lnum == v.hunk.added.start + 1))
       or (lnum >= first and lnum <= last)
+      or (delete and lnum == v.hunk.added.start)
     then
       hit = i
       break
     end
+    if delete and loose == nil and lnum == v.hunk.added.start + 1 then
+      loose = i
+    end
   end
+  hit = hit or loose
   if hit == nil then
     return {}
   end

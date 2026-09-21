@@ -167,8 +167,8 @@ function M.status(bufnr)
   return overlay.status(bufnr)
 end
 
---- Preview the hunk under the cursor. Bind this in place of
---- gitsigns' `preview_hunk`.
+--- Preview the hunk under the cursor, or close an open preview. Bind this in
+--- place of gitsigns' `preview_hunk`.
 function M.preview()
   return require("difftsigns.preview").show()
 end

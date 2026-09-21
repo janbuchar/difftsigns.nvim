@@ -58,9 +58,26 @@ are captured real difft output — never hand-edit them; recapture.
   side is an insertion point, not a line; only counted sides set a range start,
   and a delete anchored at L is adjacent to L and L+1 but *not* to L-1 — line L
   is unchanged, and gitsigns' greedy `]c` treats that as a hunk boundary. Get
-  this wrong and the preview looks stuck across a `]c`.
-- The float is anchored with `bufpos` and re-sided on `WinScrolled`, which tests
-  must fire themselves.
+  this wrong and the preview shows different content depending on which line of
+  one unbroken run of signs you ask from.
+- Which hunk a line resolves to is ownership first, the delete's L+1 only as a
+  fallback: two deletes one line apart both claim the line between them, and it
+  belongs to the one anchored on it — the sign drawn there, and what gitsigns'
+  `find_hunk` (`added.start <= lnum <= vend`, `vend == added.start` for a
+  delete) returns. The L+1 fallback exists for topdeletes, whose sign gitsigns
+  places one row down.
+- The float is transient: the next cursor move, `<Esc>` or a second `show()`
+  closes it. A CursorMoved landing on the anchor position is ignored, because
+  gitsigns' async `nav_hunk` emits those after it jumps. The `<Esc>` mapping is
+  buffer-local for the float's lifetime and restores what it shadowed.
+- A jump onto another hunk re-shows instead of closing, and a jump is detected
+  by the `'` mark: `nav_hunk` runs `normal! m'` before moving, so the mark holds
+  the anchor position (verified: `{0, 3, 1, 0}` after a `]c` from line 3), while
+  plain motion never touches it. The mark is also compared against its value at
+  open, so one that already sat on the anchor cannot fake a jump.
+- CursorMoved and WinScrolled are dispatched from the main loop, which a script
+  never reaches: tests and smoke scripts must fire them themselves.
+- The float is anchored with `bufpos` and re-sided on `WinScrolled`.
 - gitsigns' `greedy` hunk mode, own `git show`/`vim.diff`, and reading gitsigns'
   placed extmarks were all rejected: each yields a second hunk set that can
   diverge from the one rendered.

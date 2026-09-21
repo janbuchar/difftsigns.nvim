@@ -254,6 +254,35 @@ describe("verdict.compute", function()
       assert.are.equal(1, g[1].hunk.added.count, "the change of line L precedes the delete after L")
     end)
 
+    -- Deleting two lines with one survivor between them leaves delete signs on
+    -- consecutive buffer lines (L and L+1). The middle line is claimed twice:
+    -- it is the second delete's anchor and the first delete's L+1. gitsigns
+    -- draws the second delete's sign there and its `find_hunk` says the same,
+    -- so the preview must not show the deletion above it.
+    it("gives a line between two deletes to the delete anchored on it", function()
+      local d = {
+        status = "changed", fallback = false, all_significant = false,
+        changed_rhs = {}, changed_lhs = { [11] = true, [13] = true }, edits = {},
+      }
+      local set = verdict.compute({
+        { type = "delete", added = { start = 10, count = 0 }, removed = { start = 11, count = 1 } },
+        { type = "delete", added = { start = 11, count = 0 }, removed = { start = 13, count = 1 } },
+      }, d)
+
+      local above = verdict.group_at_line(set, 10)
+      assert.are.equal(1, #above)
+      assert.are.equal(11, above[1].hunk.removed.start, "line 10 previews the first deletion")
+
+      local contested = verdict.group_at_line(set, 11)
+      assert.are.equal(1, #contested)
+      assert.are.equal(13, contested[1].hunk.removed.start,
+        "the line carrying the second delete's sign previews the second deletion")
+
+      local below = verdict.group_at_line(set, 12)
+      assert.are.equal(1, #below)
+      assert.are.equal(13, below[1].hunk.removed.start, "below the gap, still the second deletion")
+    end)
+
     it("returns empty outside any hunk", function()
       local set = real_world_split()
       assert.are.same({}, verdict.group_at_line(set, 100))

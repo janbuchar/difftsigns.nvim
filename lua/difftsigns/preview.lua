@@ -16,12 +16,12 @@ local M = {}
 
 M.ns = vim.api.nvim_create_namespace("difftsigns_preview")
 
---- @type integer|nil
-local open_float = nil
+--- @type { win: integer, close: fun() }|nil
+local open_preview = nil
 
 --- @return boolean
 function M.is_open()
-  return open_float ~= nil and vim.api.nvim_win_is_valid(open_float)
+  return open_preview ~= nil and vim.api.nvim_win_is_valid(open_preview.win)
 end
 
 --- @class DifftSigns.PreviewLine
@@ -254,7 +254,7 @@ local function apply_source_syntax(buf, src_ft)
   end)
 end
 
---- Show the preview for the hunk under the cursor.
+--- Show the preview for the hunk under the cursor; close it if one is open.
 --- @param bufnr integer|nil
 --- @param winid integer|nil
 --- @return integer|nil float_win
@@ -266,11 +266,15 @@ function M.show(bufnr, winid)
     winid = vim.api.nvim_get_current_win()
   end
 
-  -- Drop the old float first, otherwise its still-pending CursorMoved autocmd
-  -- would close the new one the moment the cursor settles.
-  if M.is_open() then
-    vim.api.nvim_win_close(open_float, true)
-    open_float = nil
+  -- A repeated call closes: the float only lives while the cursor sits where it
+  -- was opened, so a second call can only mean "dismiss". `close` also runs for
+  -- a float already gone from under us, to drop its <Esc> mapping.
+  local was_open = M.is_open()
+  if open_preview ~= nil then
+    open_preview.close()
+  end
+  if was_open then
+    return nil
   end
 
   -- No structural answer here (inert buffer, or no hunk we know of): hand over
@@ -392,49 +396,71 @@ function M.show(bufnr, winid)
   -- where NormalFloat differs from Normal.
   vim.wo[float].winhighlight = "Normal:NormalFloat"
 
-  open_float = float
-
-  -- Ignore CursorMoved that lands on the position we opened at: gitsigns' async
-  -- nav_hunk emits trailing ones there, so a `once` autocmd would close a `]c`
-  -- re-show immediately. A real move follows the cursor onto another hunk group
-  -- (that is what makes plain `]c` keep the preview) and closes only when the
-  -- cursor leaves the signs.
+  -- Ignore a CursorMoved that lands on the position we opened at: gitsigns'
+  -- async nav_hunk emits trailing ones there, so closing on the first event
+  -- unconditionally would kill a float a `]c` had just opened.
   local anchor_win = winid
   local anchor_pos = vim.api.nvim_win_get_cursor(winid)
 
-  local function dismiss()
+  -- A jump sets the ' mark to where it left from (`]c` does it explicitly,
+  -- `normal! m'`, as do a search and `G`); plain cursor motion does not touch
+  -- it. So a jump that lands on another hunk re-shows there — gitsigns re-opens
+  -- its own popup on nav for the same reason — and everything else dismisses.
+  local mark_at_open = vim.fn.getpos("''")
+
+  --- @return boolean
+  local function jumped_from_anchor()
+    local mark = vim.fn.getpos("''")
+    if mark[2] == mark_at_open[2] and mark[3] == mark_at_open[3] then
+      return false
+    end
+    return mark[2] == anchor_pos[1] and mark[3] - 1 == anchor_pos[2]
+  end
+
+  -- `<Esc>` also closes. The mapping is buffer-local and lives exactly as long
+  -- as the float; a buffer-local one it shadowed is put back on the way out
+  -- (a global one reappears by itself once ours is gone).
+  local prev_esc = vim.fn.maparg("<Esc>", "n", false, true)
+
+  local function close()
+    if open_preview ~= nil and open_preview.win == float then
+      open_preview = nil
+    end
     if vim.api.nvim_win_is_valid(float) then
       vim.api.nvim_win_close(float, true)
     end
-    if open_float == float then
-      open_float = nil
+    if vim.api.nvim_buf_is_valid(bufnr) then
+      pcall(vim.keymap.del, "n", "<Esc>", { buffer = bufnr })
+      if prev_esc.buffer == 1 then
+        vim.fn.mapset("n", false, prev_esc)
+      end
     end
   end
+
+  vim.keymap.set("n", "<Esc>", close, { buffer = bufnr, nowait = true, desc = "close difftsigns preview" })
+  open_preview = { win = float, close = close }
 
   vim.api.nvim_create_autocmd("CursorMoved", {
     callback = function()
       if not vim.api.nvim_win_is_valid(float) then
         return true
       end
-      if not vim.api.nvim_win_is_valid(anchor_win) then
-        dismiss()
-        return true
+      if vim.api.nvim_win_is_valid(anchor_win) then
+        local cur = vim.api.nvim_win_get_cursor(anchor_win)
+        if cur[1] == anchor_pos[1] and cur[2] == anchor_pos[2] then
+          return
+        end
+        if jumped_from_anchor() then
+          local now = overlay.verdicts(bufnr)
+          if #(now and verdict.group_at_line(now, cur[1]) or {}) > 0 then
+            close()
+            M.show(bufnr, winid)
+            return true
+          end
+        end
       end
-      local cur = vim.api.nvim_win_get_cursor(anchor_win)
-      if cur[1] == anchor_pos[1] and cur[2] == anchor_pos[2] then
-        return
-      end
-      local now = overlay.verdicts(bufnr)
-      local next_group = now and verdict.group_at_line(now, cur[1]) or {}
-      if #next_group == 0 then
-        dismiss()
-        return true
-      end
-      if next_group[1] ~= group[1] then
-        M.show(bufnr, winid)
-        return true
-      end
-      anchor_pos = cur
+      close()
+      return true
     end,
   })
 
@@ -445,7 +471,7 @@ function M.show(bufnr, winid)
         return true
       end
       if not vim.api.nvim_win_is_valid(winid) then
-        dismiss()
+        close()
         return true
       end
       local a, r = side()
@@ -467,7 +493,7 @@ function M.show(bufnr, winid)
 
   vim.api.nvim_create_autocmd({ "InsertEnter", "BufLeave" }, {
     once = true,
-    callback = dismiss,
+    callback = close,
   })
 
   return float

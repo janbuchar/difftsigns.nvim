@@ -162,9 +162,10 @@ verdict (inert buffer, unsupported language) it hands over to gitsigns' preview:
 vim.keymap.set("n", "<leader>hp", require("difftsigns").preview)
 ```
 
-The preview follows the cursor: land on another hunk (`]c`, a search, a jump) and
-it re-shows for that hunk; move off the signs and it closes. No navigation
-bindings need to know about it.
+The float is transient: it closes on the next cursor move, on `<Esc>`, or on a
+second `preview()` call. A *jump* is the exception — `]c`, `[c`, a search or a
+`G` that lands on another hunk re-shows it there, so hunk navigation keeps the
+preview without any binding needing to know about it.
 
 ## Commands
 

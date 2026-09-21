@@ -753,10 +753,9 @@ describe("preview window", function()
     vim.api.nvim_buf_delete(buf, { force = true })
   end)
 
-  -- Following the cursor onto another hunk re-shows the preview. The re-show
-  -- must supersede the previous float rather than leak a second one that then
-  -- dismisses the new one on its own pending CursorMoved.
-  it("re-showing supersedes the open float instead of leaking one", function()
+  -- The preview is a toggle: a second call on the same spot dismisses it rather
+  -- than rebuilding an identical float.
+  it("closes on a repeated show instead of re-opening", function()
     local overlay = require("difftsigns.overlay")
     config.setup({})
     local buf = buf_with({ "const a = 1;", "const b = 2;", "const c = 3;", "const d = 4;",
@@ -776,14 +775,15 @@ describe("preview window", function()
     assert.is_not_nil(first)
     assert.is_true(preview.is_open())
 
-    local second = preview.show(buf, win)
-    assert.is_not_nil(second)
-    assert.is_true(preview.is_open())
-    assert.is_false(vim.api.nvim_win_is_valid(first),
-      "the previous float must be closed when the preview is re-shown")
-    assert.is_true(vim.api.nvim_win_is_valid(second))
+    assert.is_nil(preview.show(buf, win), "the second call closes, it does not open")
+    assert.is_false(preview.is_open())
+    assert.is_false(vim.api.nvim_win_is_valid(first))
 
-    vim.api.nvim_win_close(second, true)
+    -- And a third call opens again.
+    assert.is_not_nil(preview.show(buf, win))
+    assert.is_true(preview.is_open())
+
+    vim.api.nvim_exec_autocmds("CursorMoved", { buffer = buf })
     overlay.forget(buf)
     vim.api.nvim_win_close(win, true)
     vim.api.nvim_buf_delete(buf, { force = true })
@@ -828,9 +828,9 @@ describe("preview window", function()
     vim.api.nvim_buf_delete(buf, { force = true })
   end)
 
-  -- Plain `]c` must keep the preview without a wrapper mapping: a move that
-  -- lands on another hunk group re-shows for that group instead of closing.
-  it("follows the cursor onto another hunk, closes when it leaves the signs", function()
+  -- Ordinary motion dismisses, including motion that stays on the hunk or
+  -- lands on the next one: the preview describes where it was asked for.
+  it("closes on a move within the hunk and on a move onto another hunk", function()
     local overlay = require("difftsigns.overlay")
     config.setup({})
     local buf = buf_with({ "const a = 1;", "const b = 2;", "const c = 3;", "const d = 4;",
@@ -845,8 +845,40 @@ describe("preview window", function()
     overlay.apply(buf, set, {}, { "a", "b", "c", "d", "e", "  return x * 2;", "}" })
     vim.api.nvim_win_set_cursor(win, { 2, 0 })
 
-    local first = preview.show(buf, win)
-    assert.is_not_nil(first)
+    assert.is_not_nil(preview.show(buf, win))
+    -- Same line, different column: still a move.
+    vim.api.nvim_win_set_cursor(win, { 2, 5 })
+    vim.api.nvim_exec_autocmds("CursorMoved", { buffer = buf })
+    assert.is_false(preview.is_open(), "a move inside the hunk must dismiss the preview")
+
+    assert.is_not_nil(preview.show(buf, win))
+    vim.api.nvim_win_set_cursor(win, { 6, 0 })
+    vim.api.nvim_exec_autocmds("CursorMoved", { buffer = buf })
+    assert.is_false(preview.is_open(), "landing on another hunk must dismiss, not re-show")
+
+    overlay.forget(buf)
+    vim.api.nvim_win_close(win, true)
+    vim.api.nvim_buf_delete(buf, { force = true })
+  end)
+
+  -- ...but a JUMP that lands on another hunk re-shows there, which is what
+  -- keeps the preview alive across `]c`. gitsigns' nav_hunk marks the jump with
+  -- `normal! m'` before it moves the cursor, exactly as done here.
+  it("re-shows for the hunk a jump lands on", function()
+    local overlay = require("difftsigns.overlay")
+    config.setup({})
+    local buf = buf_with({ "const a = 1;", "const b = 2;", "const c = 3;", "const d = 4;",
+      "const e = 5;", "  return x * 3;", "}" })
+    local win = vim.api.nvim_open_win(buf, true, {
+      relative = "editor", row = 0, col = 0, width = 60, height = 10,
+    })
+    local set = verdict.compute({
+      { type = "change", added = { start = 2, count = 1 }, removed = { start = 2, count = 1 } },
+      { type = "change", added = { start = 6, count = 1 }, removed = { start = 6, count = 1 } },
+    }, fixture("single_token"))
+    overlay.apply(buf, set, {}, { "a", "b", "c", "d", "e", "  return x * 2;", "}" })
+    vim.api.nvim_win_set_cursor(win, { 2, 0 })
+
     local function header()
       for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
         if vim.api.nvim_win_get_config(w).relative == "win" then
@@ -854,17 +886,49 @@ describe("preview window", function()
         end
       end
     end
+
+    local first = preview.show(buf, win)
+    assert.is_not_nil(first)
     assert.is_truthy(header():find("@@ %-2,1 %+2,1 @@"), header())
 
+    vim.cmd("normal! m'")
     vim.api.nvim_win_set_cursor(win, { 6, 0 })
     vim.api.nvim_exec_autocmds("CursorMoved", { buffer = buf })
-    assert.is_true(preview.is_open(), "landing on another hunk must keep a preview open")
+    assert.is_true(preview.is_open(), "a jump onto another hunk must keep a preview open")
     assert.is_false(vim.api.nvim_win_is_valid(first), "the previous float must be superseded")
     assert.is_truthy(header():find("@@ %-6,1 %+6,1 @@"), header())
 
+    -- A jump that leaves the signs still dismisses.
+    vim.cmd("normal! m'")
     vim.api.nvim_win_set_cursor(win, { 4, 0 })
     vim.api.nvim_exec_autocmds("CursorMoved", { buffer = buf })
-    assert.is_false(preview.is_open(), "leaving the signs must dismiss the preview")
+    assert.is_false(preview.is_open(), "a jump off the signs must dismiss")
+
+    overlay.forget(buf)
+    vim.api.nvim_win_close(win, true)
+    vim.api.nvim_buf_delete(buf, { force = true })
+  end)
+
+  it("closes on <Esc>, giving back a buffer-local mapping it shadowed", function()
+    local overlay = require("difftsigns.overlay")
+    config.setup({})
+    local buf = buf_with({ "const a = 1;", "const b = 2;", "const c = 3;", "const d = 4;",
+      "const e = 5;", "  return x * 3;", "}" })
+    local win = vim.api.nvim_open_win(buf, true, {
+      relative = "editor", row = 0, col = 0, width = 60, height = 10,
+    })
+    local set = verdict.compute({
+      { type = "change", added = { start = 6, count = 1 }, removed = { start = 6, count = 1 } },
+    }, fixture("single_token"))
+    overlay.apply(buf, set, {}, { "a", "b", "c", "d", "e", "  return x * 2;", "}" })
+    vim.api.nvim_win_set_cursor(win, { 6, 0 })
+    vim.keymap.set("n", "<Esc>", "<Cmd>let g:difftsigns_test_esc = 1<CR>", { buffer = buf })
+
+    assert.is_not_nil(preview.show(buf, win))
+    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<Esc>", true, false, true), "mx", false)
+    assert.is_false(preview.is_open(), "<Esc> must dismiss the preview")
+    assert.is_truthy(vim.fn.maparg("<Esc>", "n"):find("difftsigns_test_esc", 1, true),
+      "the buffer's own <Esc> must be back: " .. vim.fn.maparg("<Esc>", "n"))
 
     overlay.forget(buf)
     vim.api.nvim_win_close(win, true)
