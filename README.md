@@ -14,6 +14,12 @@ glyphs, using your existing `]c` navigation.
 It adds **no gutter column**, **no navigation bindings**, and **no new mental
 model**. It changes the colour of things you were already looking at.
 
+If you want a difftastic *viewer* — a side-by-side or pager-style window you open
+on demand — that already exists:
+[difftastic.nvim](https://github.com/clabby/difftastic.nvim) and
+[difft.nvim](https://github.com/ahkohd/difft.nvim). difftsigns is not a view. It
+annotates the buffer you are already editing, and only through gitsigns.
+
 ## Requirements
 
 - Neovim 0.11+
