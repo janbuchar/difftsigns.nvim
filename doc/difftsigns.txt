@@ -1,0 +1,352 @@
+*difftsigns.txt*     Dim formatting-only lines in the gitsigns gutter
+
+==============================================================================
+CONTENTS                                                          *difftsigns*
+
+  1. Introduction ........................................ |difftsigns-intro|
+  2. Requirements ................................. |difftsigns-requirements|
+  3. Setup ............................................... |difftsigns-setup|
+  4. Configuration ...................................... |difftsigns-config|
+  5. Commands ......................................... |difftsigns-commands|
+  6. Lua API ............................................... |difftsigns-api|
+  7. Preview ........................................... |difftsigns-preview|
+  8. Highlight groups ............................... |difftsigns-highlights|
+  9. How it works ................................. |difftsigns-how-it-works|
+ 10. Limitations ................................... |difftsigns-limitations|
+ 11. Troubleshooting ........................... |difftsigns-troubleshooting|
+
+==============================================================================
+1. INTRODUCTION                                             *difftsigns-intro*
+
+You reindent a block, run a formatter, or wrap something in a conditional.
+gitsigns lights up twelve lines; two of them actually changed.
+
+difftsigns asks difftastic (https://github.com/Wilfred/difftastic) which of
+those lines changed structurally and dims the rest, in gitsigns' own gutter
+cells, with gitsigns' own glyphs. It adds no column, no bindings and no new
+mental model: `]c` and friends keep working, and only the colour of cells you
+were already looking at changes.
+
+Two rules govern the whole plugin:
+
+1. It subtracts emphasis; it never adds it. Every cell it touches is a cell
+   gitsigns already drew. It will never mark a line gitsigns left alone.
+2. When in doubt, it does nothing. A missing overlay is cosmetic; a wrong
+   overlay hides a real change. Every ambiguity resolves toward leaving the
+   cell lit.
+
+Because of rule 2 the failure mode is "the plugin is not installed": if
+difftastic is missing, errors, times out, hits a size limit or cannot parse
+the language, you get plain gitsigns. See |difftsigns-troubleshooting|.
+
+==============================================================================
+2. REQUIREMENTS                                      *difftsigns-requirements*
+
+- Neovim 0.11 or newer.
+- gitsigns.nvim (https://github.com/lewis6991/gitsigns.nvim). Required, not
+  optional: difftsigns has no diff of its own. See |difftsigns-how-it-works|.
+- difftastic `0.70.0` on `$PATH` as `difft`, or wherever
+  |difftsigns-difft_cmd| points. Other versions load with a warning;
+  difftastic's JSON output is explicitly unstable, so only the pinned version
+  is validated.
+
+==============================================================================
+3. SETUP                                                    *difftsigns-setup*
+
+With lazy.nvim: >lua
+
+    {
+      "janbuchar/difftsigns.nvim",
+      dependencies = { "lewis6991/gitsigns.nvim" },
+      opts = {},
+    }
+<
+Or directly: >lua
+
+    require("difftsigns").setup()
+<
+No 'signcolumn' changes are needed; the column is gitsigns'. Buffers gitsigns
+is already tracking when |difftsigns.setup()| runs are adopted, so the order
+of the two `setup()` calls does not matter.
+
+==============================================================================
+4. CONFIGURATION                                           *difftsigns-config*
+
+Defaults, all keys optional. Unknown keys and wrong types are rejected at
+`setup()` with an error rather than failing later inside a callback. >lua
+
+    require("difftsigns").setup({
+      difft_cmd              = "difft",
+      debounce_ms            = 400,
+      max_filesize           = 1024 * 1024,
+      graph_limit            = nil,
+      noise_hl               = "DifftSignsNoise",
+      noise_text             = nil,
+      priority_offset        = 1,
+      language_overrides     = {},
+      difft_version_expected = "0.70.0",
+      on_attach              = nil,
+    })
+<
+                                                       *difftsigns-difft_cmd*
+difft_cmd ~
+    `string`. Path to, or wrapper around, the difftastic executable.
+
+                                                     *difftsigns-debounce_ms*
+debounce_ms ~
+    `integer` >= 0. Trailing debounce, in milliseconds, before re-running
+    difftastic after gitsigns updates. The default is measured, not guessed:
+    with difftastic 0.69.0 a single-token edit costs about 41 ms on a
+    1145-line TypeScript file and 200-330 ms on a 6045-line one.
+
+                                                    *difftsigns-max_filesize*
+max_filesize ~
+    `integer` >= 0. Files larger than this many bytes are skipped. Matches
+    difftastic's own `--byte-limit`, past which it degrades to a line diff
+    that must never be presented as a structural verdict.
+
+                                                     *difftsigns-graph_limit*
+graph_limit ~
+    `integer` >= 1 or `nil`. Passed as difftastic's `--graph-limit`; `nil`
+    leaves its default (3,000,000) alone.
+
+    difftastic abandons the structural diff when its internal graph exceeds
+    this many vertices and returns a line diff instead. difftsigns refuses to
+    render that, so you get plain gitsigns and |:DifftSigns| `status` says so.
+    Measured on a 708-line TypeScript file with about 50 changed lines:
+
+        limit        outcome                    time ~
+        100,000      gave up                    0.4 s
+        1,000,000    gave up                    2.6 s
+        3,000,000    gave up (difft default)    7.9 s
+        5,000,000    structural diff            7.7 s
+
+    Raising it buys real answers on heavily-changed files for no more time
+    than failing slowly cost; lowering it makes hopeless cases fail fast.
+    Raising it also increases peak memory.
+
+                                                        *difftsigns-noise_hl*
+noise_hl ~
+    `string`. Highlight group for demoted (formatting-only) cells. See
+    |difftsigns-highlights|.
+
+                                                      *difftsigns-noise_text*
+noise_text ~
+    `string` or `nil`. Glyph for demoted cells. `nil` mirrors gitsigns' glyph
+    for the sign type in that cell, so a dimmed hunk still reads as the same
+    kind of change and only the colour differs.
+
+                                                 *difftsigns-priority_offset*
+priority_offset ~
+    `integer` >= 1. Added to gitsigns' `sign_priority` for the overlay's
+    extmarks. Must be at least 1: extmark precedence is by priority alone,
+    never placement order, so a tie would leave the cell to chance. Keep it
+    below diagnostics (10 and up) unless you want the overlay to win there.
+
+                                              *difftsigns-language_overrides*
+language_overrides ~
+    `table<string, string>`. Glob to difftastic language name, passed as
+    `--override`. Example: `{ ["*.foo"] = "javascript" }`.
+
+                                          *difftsigns-difft_version_expected*
+difft_version_expected ~
+    `string`. Version of difftastic the plugin was validated against. A
+    different `difft --version` produces a warning at `setup()` and in
+    |:checkhealth|; the plugin still runs.
+
+                                                       *difftsigns-on_attach*
+on_attach ~
+    `fun(bufnr: integer)` or `nil`. Called after difftsigns attaches to a
+    buffer.
+
+==============================================================================
+5. COMMANDS                                              *difftsigns-commands*
+
+                                                                 *:DifftSigns*
+:DifftSigns {subcommand}
+
+    preview     Preview the hunk group under the cursor with structural
+                detail. See |difftsigns-preview|.
+    toggle      Turn the overlay off (or back on) for the current buffer, to
+                see plain gitsigns again.
+    refresh     Force a re-diff of the current buffer.
+    status      Report the noise/real split for the current buffer, or the
+                reason there is no overlay.
+    attach      Attach to the current buffer.
+    detach      Detach from the current buffer and remove every overlay sign.
+
+==============================================================================
+6. LUA API                                                    *difftsigns-api*
+
+                                                          *difftsigns.setup()*
+setup({opts})
+    Apply {opts} over the defaults (see |difftsigns-config|), register the
+    |:DifftSigns| command and autocommands, and adopt buffers gitsigns is
+    already tracking. Invalid {opts} are reported with |vim.notify()| and the
+    plugin stays inert.
+
+                                                         *difftsigns.status()*
+status({bufnr})
+    Statusline helper. Returns a string such as `"difft: 3 noise / 2 real"`,
+    or `nil` when there is nothing to report. {bufnr} defaults to the current
+    buffer.
+
+                                                        *difftsigns.preview()*
+preview()
+    Open the hunk preview under the cursor. Bind this in place of gitsigns'
+    `preview_hunk`: where difftsigns has no structural verdict (inert buffer,
+    unsupported language) it hands over to gitsigns' preview.
+
+                                                         *difftsigns.toggle()*
+toggle()
+    Toggle the overlay for the current buffer. Returns the new state.
+
+==============================================================================
+7. PREVIEW                                                *difftsigns-preview*
+
+|difftsigns.preview()| shows the change under the cursor in gitsigns'
+familiar shape (removed lines, then added lines) with two things gitsigns
+cannot show: the exact changed tokens, and the reflow-only lines dimmed. A
+header quantifies the split, e.g. >
+
+    add+change @@ -363,1 +363,6 @@ (2 hunks)  2 real, 3 formatting-only
+<
+Source lines are shown verbatim and syntax-highlighted like the buffer they
+came from. The `-`/`+` markers live in the sign column, not inline, so the
+highlighter parses clean lines. Change emphasis is a red/green background
+behind the changed tokens rather than a foreground colour, so it stands out
+without fighting the syntax colours.
+
+A one-sided change shows one side. If every token difftastic reported lives
+on one side, the other is not printed and the header says `additions only` or
+`deletions only`. A formatting-only hunk keeps both sides: seeing the reflow
+is the point. So does a hunk whose sides differ in line count with all the
+tokens on the removed side.
+
+Only the changed tokens are washed, not the whole line. A whole-line wash is
+reserved for cases with no tokens to prefer: a new or deleted file, and lines
+that exist on one side of the group only.
+
+The preview covers the whole contiguous run of hunks, not one hunk. gitsigns
+computes hunks at zero context and, with `diff_opts.linematch`, can split one
+logical edit into several adjacent hunks; keying the preview to one of them
+would show different content on different lines of one unbroken block of
+signs. The header discloses when hunks were merged: `(2 hunks)`.
+
+The float follows the cursor: land on another hunk (`]c`, a search, a jump)
+and it re-shows for that hunk; move off the signs and it closes. No
+navigation binding needs to know about it. >lua
+
+    vim.keymap.set("n", "<leader>hp", require("difftsigns").preview)
+<
+==============================================================================
+8. HIGHLIGHT GROUPS                                    *difftsigns-highlights*
+
+All groups are defined with `default`, so a colourscheme or your config may
+override them freely.
+
+                                                        *hl-DifftSignsNoise*
+DifftSignsNoise         Links to |hl-NonText|. Demoted (formatting-only)
+                        gutter cells. The plugin's entire visual design is
+                        this one group; if dimming is too subtle or too
+                        strong in your colourscheme, this is the knob.
+
+                                                        *hl-DifftSignsAdded*
+DifftSignsAdded         Links to `Added` (|group-name|). The preview's `+`
+                        sign marker.
+
+                                                      *hl-DifftSignsRemoved*
+DifftSignsRemoved       Links to `Removed` (|group-name|). The preview's `-`
+                        sign marker.
+
+                                                      *hl-DifftSignsAddedBg*
+DifftSignsAddedBg       Links to |hl-DiffAdd|. Background behind added
+                        tokens in the preview.
+
+                                                    *hl-DifftSignsRemovedBg*
+DifftSignsRemovedBg     Links to |hl-DiffDelete|. Background behind removed
+                        tokens in the preview.
+
+                                                      *hl-DifftSignsContext*
+DifftSignsContext       Links to `Comment` (|group-name|). Reflow-only lines
+                        in the preview.
+
+The sign markers link `Added`/`Removed` rather than `DiffAdd`/`DiffDelete` on
+purpose: the latter are background-only in most colourschemes and useless for
+telling an addition from a removal as a sign colour. The token backgrounds are
+the opposite case: they sit behind syntax-highlighted source, so a
+background-only group is exactly what is wanted.
+
+==============================================================================
+9. HOW IT WORKS                                      *difftsigns-how-it-works*
+
+difftsigns borrows all of its geometry:
+
+    Hunk boundaries                 gitsigns
+    Reference text (the "before")   gitsigns
+    Base revision                   gitsigns (follows `change_base`)
+    Sign glyphs and priority        gitsigns
+    Which lines really changed      difftastic
+
+On every `User GitSignsUpdate` it debounces (|difftsigns-debounce_ms|), writes
+the reference and buffer text to tempfiles carrying the source extension, runs
+`difft --display json` on them, and joins the result with gitsigns' hunks.
+For every gutter cell gitsigns drew on a line difftastic considers formatting
+noise, it places its own sign in the same cell at a higher extmark priority
+(|difftsigns-priority_offset|) with gitsigns' glyph and a dim highlight.
+Results are dropped if the buffer changed while difftastic was running.
+
+What it catches, verified against difftastic 0.70.0:
+
+    Reindent / reformat                           fully dimmed
+    Prettier-style rewrap (incl. trailing comma)  fully dimmed
+    Wrap a block in `if`                          new lines lit, body dimmed
+    Variable rename                               lit, exact tokens marked
+    Genuine deletion                              lit
+    Removed blank lines                           dimmed
+    Reindent + argument removed from a call       lit, removed token marked
+    Reindent + value changed                      lit, changed token marked
+    Moved / reordered code                        stays lit (see below)
+
+==============================================================================
+10. LIMITATIONS                                       *difftsigns-limitations*
+
+Moved code is not detected. difftastic 0.70 has no move detection: a
+reordered function is reported as a deletion plus an addition with every
+token changed, so difftsigns leaves it fully lit. That is the safe direction
+to fail, but a reorder looks exactly as noisy as it does today.
+
+Staged hunks are not annotated. gitsigns diffs those against a different
+base, which would need a second difftastic run.
+
+Unsupported languages get nothing. difftastic falls back to a line diff for
+those; presenting that as a structural verdict would be a lie.
+
+Heavily-changed files may exceed difftastic's graph limit and fall back the
+same way. See |difftsigns-graph_limit|.
+
+No staging. Structural changes do not round-trip through `git apply`;
+gitsigns already stages correctly.
+
+Two of the four things read from gitsigns are internal APIs (`gitsigns.cache`
+and `gitsigns.hunks.calc_signs`). If a gitsigns update moves them, difftsigns
+goes inert and says so in |:checkhealth| rather than rendering something
+wrong.
+
+==============================================================================
+11. TROUBLESHOOTING                               *difftsigns-troubleshooting*
+
+"Why is nothing dimmed?" is the only support question this plugin gets, and
+every cause is reported: >
+
+    :checkhealth difftsigns
+    :DifftSigns status
+<
+|:checkhealth| verifies the difftastic binary, its version against
+|difftsigns-difft_version_expected|, that `--display json` works, that the
+gitsigns internals it reads are present, and the state of the current buffer.
+`status` reports either the noise/real split or the specific reason the
+buffer has no overlay (not attached, file too large, unsupported language,
+graph limit exceeded, difftastic error).
+
+ vim:tw=78:ts=8:ft=help:norl:
