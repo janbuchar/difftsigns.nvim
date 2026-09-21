@@ -36,7 +36,7 @@ model**. It changes the colour of things you were already looking at.
 ```lua
 -- lazy.nvim
 {
-  "difftsigns.nvim",
+  "janbuchar/difftsigns.nvim",
   dependencies = { "lewis6991/gitsigns.nvim" },
   opts = {},
 }

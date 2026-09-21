@@ -1,0 +1,26 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rhysd/action-setup-vim@v1
+        with:
+          neovim: true
+          version: stable
+      - name: Install difftastic 0.70.0
+        run: |
+          curl -fsSL https://github.com/Wilfred/difftastic/releases/download/0.70.0/difft-x86_64-unknown-linux-gnu.tar.gz | tar xz
+          sudo mv difft /usr/local/bin/
+      - name: Install plenary and gitsigns
+        run: |
+          mkdir -p ~/.local/share/nvim/lazy
+          git clone --depth 1 https://github.com/nvim-lua/plenary.nvim ~/.local/share/nvim/lazy/plenary.nvim
+          git clone --depth 1 https://github.com/lewis6991/gitsigns.nvim ~/.local/share/nvim/lazy/gitsigns.nvim
+      - run: make test
