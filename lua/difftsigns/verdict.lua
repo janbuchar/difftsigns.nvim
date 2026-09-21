@@ -135,14 +135,17 @@ function M.is_significant(v, lnum)
   return v.anchor_significant
 end
 
---- Buffer line range a verdict's hunk occupies; a `delete` hunk collapses to
---- its anchor line.
+--- Buffer line range a verdict's hunk occupies. A `delete` hunk is the gap
+--- AFTER its anchor line, not the line itself, so it yields the empty span
+--- (L+1, L): adjacent to a hunk ending at L or starting at L+1, but not to one
+--- ending at L-1 — line L is unchanged, and git (and gitsigns' greedy `]c`)
+--- treat that as two hunks.
 --- @param v DifftSigns.Verdict
 --- @return integer first, integer last
 local function span_of(v)
   local a = v.hunk.added
   if a.count == 0 then
-    return a.start, a.start
+    return a.start + 1, a.start
   end
   return a.start, a.start + a.count - 1
 end
@@ -155,7 +158,10 @@ local function sorted(set)
     vs[#vs + 1] = v
   end
   table.sort(vs, function(a, b)
-    return a.hunk.added.start < b.hunk.added.start
+    if a.hunk.added.start ~= b.hunk.added.start then
+      return a.hunk.added.start < b.hunk.added.start
+    end
+    return a.hunk.added.count > 0 and b.hunk.added.count == 0
   end)
   return vs
 end
@@ -185,7 +191,7 @@ function M.group_at_line(set, lnum)
     -- A delete hunk covers no lines, so also accept its anchor and the line
     -- below it (where a topdelete cap lands).
     if v.lines[lnum] ~= nil
-      or (v.hunk.added.count == 0 and (lnum == first or lnum == first + 1))
+      or (v.hunk.added.count == 0 and (lnum == v.hunk.added.start or lnum == v.hunk.added.start + 1))
       or (lnum >= first and lnum <= last)
     then
       hit = i

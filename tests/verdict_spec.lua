@@ -220,6 +220,40 @@ describe("verdict.compute", function()
       assert.are.equal(2, #verdict.group_at_line(set, 21))
     end)
 
+    -- REGRESSION, found in the wild. A delete anchored at L lives in the gap
+    -- after L; L itself is unchanged. Treating it as occupying L glued a hunk
+    -- ending at L-1 to one starting at L+1, so the preview spanned two of the
+    -- hunks gitsigns' greedy `]c` stops at, and looked stuck across the jump.
+    it("does NOT merge across an unchanged line above a delete anchor", function()
+      local d = {
+        status = "changed", fallback = false, all_significant = false,
+        changed_rhs = { [27] = true, [29] = true }, changed_lhs = { [22] = true, [28] = true }, edits = {},
+      }
+      local set = verdict.compute({
+        { type = "change", added = { start = 27, count = 1 }, removed = { start = 22, count = 1 } },
+        { type = "delete", added = { start = 28, count = 0 }, removed = { start = 24, count = 4 } },
+        { type = "change", added = { start = 29, count = 1 }, removed = { start = 28, count = 1 } },
+      }, d)
+      assert.are.equal(1, #verdict.group_at_line(set, 27), "line 28 is unchanged: separate hunks")
+      local below = verdict.group_at_line(set, 29)
+      assert.are.equal(2, #below, "the delete belongs with the change right after its anchor")
+      assert.are.equal(28, below[1].hunk.added.start)
+    end)
+
+    it("merges a delete hunk with the change ending on its anchor line", function()
+      local d = {
+        status = "changed", fallback = false, all_significant = false,
+        changed_rhs = { [31] = true }, changed_lhs = { [30] = true }, edits = {},
+      }
+      local set = verdict.compute({
+        { type = "change", added = { start = 31, count = 1 }, removed = { start = 30, count = 1 } },
+        { type = "delete", added = { start = 31, count = 0 }, removed = { start = 31, count = 7 } },
+      }, d)
+      local g = verdict.group_at_line(set, 31)
+      assert.are.equal(2, #g)
+      assert.are.equal(1, g[1].hunk.added.count, "the change of line L precedes the delete after L")
+    end)
+
     it("returns empty outside any hunk", function()
       local set = real_world_split()
       assert.are.same({}, verdict.group_at_line(set, 100))

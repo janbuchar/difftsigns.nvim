@@ -55,7 +55,10 @@ are captured real difft output — never hand-edit them; recapture.
   priority alone, never placement order. Always set it explicitly.
 - The preview renders the contiguous *group* of hunks (`verdict.group_at_line`),
   because linematch can split one edit into adjacent hunks. A zero-count hunk
-  side is an insertion point, not a line; only counted sides set a range start.
+  side is an insertion point, not a line; only counted sides set a range start,
+  and a delete anchored at L is adjacent to L and L+1 but *not* to L-1 — line L
+  is unchanged, and gitsigns' greedy `]c` treats that as a hunk boundary. Get
+  this wrong and the preview looks stuck across a `]c`.
 - The float is anchored with `bufpos` and re-sided on `WinScrolled`, which tests
   must fire themselves.
 - gitsigns' `greedy` hunk mode, own `git show`/`vim.diff`, and reading gitsigns'
