@@ -254,7 +254,7 @@ local function apply_source_syntax(buf, src_ft)
   end)
 end
 
---- Show the preview for the hunk under the cursor; close it if one is open.
+--- Show the preview for the hunk under the cursor; focus an already-open one.
 --- @param bufnr integer|nil
 --- @param winid integer|nil
 --- @return integer|nil float_win
@@ -266,15 +266,16 @@ function M.show(bufnr, winid)
     winid = vim.api.nvim_get_current_win()
   end
 
-  -- A repeated call closes: the float only lives while the cursor sits where it
-  -- was opened, so a second call can only mean "dismiss". `close` also runs for
-  -- a float already gone from under us, to drop its <Esc> mapping.
-  local was_open = M.is_open()
+  -- A repeated call focuses the float, like gitsigns' `preview_hunk` focusing
+  -- its own popup: the only way to reach the tail of a hunk too tall for the
+  -- screen, since the float cannot be scrolled unfocused.
+  if M.is_open() then
+    vim.api.nvim_set_current_win(open_preview.win)
+    return open_preview.win
+  end
+  -- A float already gone from under us still has its <Esc> mapping to drop.
   if open_preview ~= nil then
     open_preview.close()
-  end
-  if was_open then
-    return nil
   end
 
   -- No structural answer here (inert buffer, or no hunk we know of): hand over
@@ -357,22 +358,35 @@ function M.show(bufnr, winid)
   -- it; re-enabled below).
   local SIGN_WIDTH = 2
   local BORDER_ROWS = 2
+  local MIN_HEIGHT = 3
   local float_width = math.max(20, math.min(width + SIGN_WIDTH, math.floor(vim.o.columns * 0.85)))
-  local float_height = math.min(#texts, 24)
 
-  -- Below the hunk line, or above when there is no room: nvim clamps an
-  -- overflowing float instead of flipping it, parking it mid-window.
-  --- @return "NW"|"SW" anchor, integer row
-  local function side()
+  -- Below the hunk line, or above when that side has more room: nvim clamps an
+  -- overflowing float instead of flipping it, parking it mid-window. The height
+  -- is whatever the chosen side actually offers — a fixed cap either wastes a
+  -- tall terminal or silently eats the tail of a long hunk.
+  --- @return "NW"|"SW" anchor, integer row, integer height
+  local function geometry()
     local screen_row = vim.fn.screenpos(winid, cursor, 1).row
-    local room_below = (vim.o.lines - vim.o.cmdheight) - screen_row
-    if screen_row > 0 and room_below < float_height + BORDER_ROWS then
-      return "SW", 0
+    local below = (vim.o.lines - vim.o.cmdheight) - screen_row - BORDER_ROWS
+    local above = screen_row - 1 - BORDER_ROWS
+    if screen_row > 0 and below < #texts and above > below then
+      return "SW", 0, math.max(math.min(#texts, above), MIN_HEIGHT)
     end
-    return "NW", 1
+    return "NW", 1, math.max(math.min(#texts, below), MIN_HEIGHT)
   end
 
-  local anchor, row = side()
+  -- What is off the bottom has to be named: unfocused, the float cannot be
+  -- scrolled at all. `last_visible` is the last row on show, then whatever the
+  -- float scrolled to once focused, so the count stays true.
+  --- @param last_visible integer
+  --- @return string
+  local function footer(last_visible)
+    local hidden = #texts - last_visible
+    return hidden > 0 and (" +%d more lines "):format(hidden) or ""
+  end
+
+  local anchor, row, float_height = geometry()
   local float = vim.api.nvim_open_win(buf, false, {
     relative = "win",
     win = winid,
@@ -386,6 +400,8 @@ function M.show(bufnr, winid)
     border = "rounded",
     title = " difftsigns ",
     title_pos = "left",
+    footer = footer(float_height),
+    footer_pos = "right",
   })
 
   vim.wo[float].signcolumn = "yes:1"
@@ -438,6 +454,11 @@ function M.show(bufnr, winid)
   end
 
   vim.keymap.set("n", "<Esc>", close, { buffer = bufnr, nowait = true, desc = "close difftsigns preview" })
+  -- Same keys once focused, plus `q` as gitsigns' popup has. The float's buffer
+  -- is scratch and wiped with it, so these need no restoring.
+  for _, lhs in ipairs({ "<Esc>", "q" }) do
+    vim.keymap.set("n", lhs, close, { buffer = buf, nowait = true, desc = "close difftsigns preview" })
+  end
   open_preview = { win = float, close = close }
 
   vim.api.nvim_create_autocmd("CursorMoved", {
@@ -464,7 +485,7 @@ function M.show(bufnr, winid)
     end,
   })
 
-  -- The line stays put under `bufpos`; which side of it has room does not.
+  -- The line stays put under `bufpos`; how much room each side of it has does not.
   vim.api.nvim_create_autocmd("WinScrolled", {
     callback = function()
       if not vim.api.nvim_win_is_valid(float) then
@@ -474,9 +495,17 @@ function M.show(bufnr, winid)
         close()
         return true
       end
-      local a, r = side()
-      if a ~= anchor then
-        anchor = a
+      -- Scrolling the float itself changes nothing but the footer's count.
+      if vim.api.nvim_get_current_win() == float then
+        local last = vim.api.nvim_win_call(float, function()
+          return vim.fn.line("w$")
+        end)
+        vim.api.nvim_win_set_config(float, { footer = footer(last), footer_pos = "right" })
+        return
+      end
+      local a, r, h = geometry()
+      if a ~= anchor or h ~= float_height then
+        anchor, float_height = a, h
         vim.api.nvim_win_set_config(float, {
           relative = "win",
           win = winid,
@@ -485,15 +514,34 @@ function M.show(bufnr, winid)
           row = r,
           col = 0,
           width = float_width,
-          height = float_height,
+          height = h,
+          border = "rounded",
+          title = " difftsigns ",
+          title_pos = "left",
+          footer = footer(h),
+          footer_pos = "right",
         })
       end
     end,
   })
 
-  vim.api.nvim_create_autocmd({ "InsertEnter", "BufLeave" }, {
-    once = true,
-    callback = close,
+  -- Entering the float is now a legitimate destination, so leaving is judged by
+  -- where we ended up, not by the source buffer being left.
+  vim.api.nvim_create_autocmd({ "InsertEnter", "BufEnter", "WinEnter" }, {
+    callback = function(ev)
+      if not vim.api.nvim_win_is_valid(float) then
+        return true
+      end
+      local win = vim.api.nvim_get_current_win()
+      if win == float then
+        return
+      end
+      if ev.event ~= "InsertEnter" and win == anchor_win and vim.api.nvim_get_current_buf() == bufnr then
+        return
+      end
+      close()
+      return true
+    end,
   })
 
   return float

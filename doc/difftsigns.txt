@@ -193,7 +193,7 @@ status({bufnr})
 
                                                         *difftsigns.preview()*
 preview()
-    Open the hunk preview under the cursor, or close an already-open one. Bind
+    Open the hunk preview under the cursor, or focus an already-open one. Bind
     this in place of gitsigns' `preview_hunk`: where difftsigns has no
     structural verdict (inert buffer, unsupported language) it hands over to
     gitsigns' preview.
@@ -234,9 +234,17 @@ logical edit into several adjacent hunks; keying the preview to one of them
 would show different content on different lines of one unbroken block of
 signs. The header discloses when hunks were merged: `(2 hunks)`.
 
-The float is transient: it closes on the next cursor move, on <Esc>, or on a
-second |difftsigns.preview()| call. A buffer-local <Esc> mapping it shadowed
-is restored when it closes.
+The float takes the room actually free above or below the hunk line, whichever
+side has more of it, and is re-fitted when the window scrolls. A hunk too tall
+for that has its remainder counted on the border, `+23 more lines`; the count
+follows the float's own scrolling and goes when nothing is left below.
+
+The float is transient: it closes on the next cursor move or on <Esc>. A
+buffer-local <Esc> mapping it shadowed is restored when it closes.
+
+Calling |difftsigns.preview()| again focuses the float, the way gitsigns'
+`preview_hunk` focuses its own popup: that is how a hunk too tall for the
+screen gets scrolled. Inside it, `q` or <Esc> closes.
 
 A jump is the exception: `]c`, `[c`, a search or a `G` landing on another hunk
 re-shows the preview there, so hunk navigation keeps it without a wrapper

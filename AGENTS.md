@@ -66,10 +66,14 @@ are captured real difft output — never hand-edit them; recapture.
   `find_hunk` (`added.start <= lnum <= vend`, `vend == added.start` for a
   delete) returns. The L+1 fallback exists for topdeletes, whose sign gitsigns
   places one row down.
-- The float is transient: the next cursor move, `<Esc>` or a second `show()`
-  closes it. A CursorMoved landing on the anchor position is ignored, because
-  gitsigns' async `nav_hunk` emits those after it jumps. The `<Esc>` mapping is
-  buffer-local for the float's lifetime and restores what it shadowed.
+- The float is transient: the next cursor move or `<Esc>` closes it; a second
+  `show()` focuses it instead (gitsigns' `preview_hunk` does the same with
+  `popup.focus_open`), which is the only way to scroll a clipped hunk. A
+  CursorMoved landing on the anchor position is ignored, because gitsigns'
+  async `nav_hunk` emits those after it jumps. The source buffer's `<Esc>`
+  mapping is restored on close; the float's own `q`/`<Esc>` die with its
+  scratch buffer. Because focusing is legitimate, leaving is judged on
+  `WinEnter`/`BufEnter` by where the cursor ended up, never on `BufLeave`.
 - A jump onto another hunk re-shows instead of closing, and a jump is detected
   by the `'` mark: `nav_hunk` runs `normal! m'` before moving, so the mark holds
   the anchor position (verified: `{0, 3, 1, 0}` after a `]c` from line 3), while
@@ -77,7 +81,11 @@ are captured real difft output — never hand-edit them; recapture.
   open, so one that already sat on the anchor cannot fake a jump.
 - CursorMoved and WinScrolled are dispatched from the main loop, which a script
   never reaches: tests and smoke scripts must fire them themselves.
-- The float is anchored with `bufpos` and re-sided on `WinScrolled`.
+- The float is anchored with `bufpos`; `geometry()` picks the side with more
+  room and sizes the height to it (a fixed cap either wastes a tall terminal or
+  eats the tail), and `WinScrolled` re-runs it. What is off the bottom is
+  counted in the border footer, recomputed from `line("w$")` when the float
+  itself scrolls so the count never outlives the lines it names.
 - gitsigns' `greedy` hunk mode, own `git show`/`vim.diff`, and reading gitsigns'
   placed extmarks were all rejected: each yields a second hunk set that can
   diverge from the one rendered.

@@ -753,9 +753,10 @@ describe("preview window", function()
     vim.api.nvim_buf_delete(buf, { force = true })
   end)
 
-  -- The preview is a toggle: a second call on the same spot dismisses it rather
-  -- than rebuilding an identical float.
-  it("closes on a repeated show instead of re-opening", function()
+  -- A second call focuses the float instead of rebuilding or closing it: an
+  -- unfocused float cannot be scrolled, so this is the only way to the tail of
+  -- a hunk taller than the screen. `q` and <Esc> then dismiss it from inside.
+  it("focuses the open float on a repeated show, and closes it from inside", function()
     local overlay = require("difftsigns.overlay")
     config.setup({})
     local buf = buf_with({ "const a = 1;", "const b = 2;", "const c = 3;", "const d = 4;",
@@ -771,19 +772,19 @@ describe("preview window", function()
 
     assert.is_false(preview.is_open(), "no preview open before the first show")
 
-    local first = preview.show(buf, win)
-    assert.is_not_nil(first)
+    local float = preview.show(buf, win)
+    assert.is_not_nil(float)
+    assert.are_not.equal(float, vim.api.nvim_get_current_win(), "the first show must not steal focus")
+
+    assert.are.equal(float, preview.show(buf, win), "the second call must return the same float")
+    assert.are.equal(float, vim.api.nvim_get_current_win(), "...and focus it")
     assert.is_true(preview.is_open())
 
-    assert.is_nil(preview.show(buf, win), "the second call closes, it does not open")
-    assert.is_false(preview.is_open())
-    assert.is_false(vim.api.nvim_win_is_valid(first))
+    -- Focused, so this is the float's own mapping, not the source buffer's.
+    vim.api.nvim_feedkeys("q", "mx", false)
+    assert.is_false(preview.is_open(), "q must dismiss the focused float")
+    assert.are.equal(win, vim.api.nvim_get_current_win(), "focus must return to the source window")
 
-    -- And a third call opens again.
-    assert.is_not_nil(preview.show(buf, win))
-    assert.is_true(preview.is_open())
-
-    vim.api.nvim_exec_autocmds("CursorMoved", { buffer = buf })
     overlay.forget(buf)
     vim.api.nvim_win_close(win, true)
     vim.api.nvim_buf_delete(buf, { force = true })
@@ -992,6 +993,64 @@ describe("preview window", function()
       "with no room below, the float must flip above the hunk line")
 
     vim.api.nvim_win_close(float, true)
+    overlay.forget(buf)
+    vim.api.nvim_win_close(win, true)
+    vim.api.nvim_buf_delete(buf, { force = true })
+  end)
+
+  -- A hunk taller than the screen has to be cut somewhere. The float is never
+  -- focused and closes on the next move, so the tail cannot be scrolled to:
+  -- the count of hidden lines has to be on the border or the preview lies.
+  it("discloses the lines a too-tall hunk leaves off the bottom", function()
+    local overlay = require("difftsigns.overlay")
+    config.setup({})
+    local lines, ref = {}, { "const keep = 0;" }
+    for i = 1, 40 do
+      lines[i] = "const added" .. i .. " = " .. i .. ";"
+    end
+    local buf = buf_with(lines)
+    local win = vim.api.nvim_open_win(buf, true, {
+      relative = "editor", row = 0, col = 0, width = 60, height = 22,
+    })
+    local changed = {}
+    for i = 1, 40 do
+      changed[i] = true
+    end
+    local set = verdict.compute({
+      { type = "add", added = { start = 1, count = 40 }, removed = { start = 1, count = 0 } },
+    }, {
+      status = "changed", fallback = false, all_significant = true,
+      changed_rhs = changed, changed_lhs = {}, edits = {},
+    })
+    overlay.apply(buf, set, {}, ref)
+    vim.api.nvim_win_set_cursor(win, { 3, 0 })
+
+    local rendered = preview._build(buf, verdict.group_at_line(set, 3), ref)
+    local float = preview.show(buf, win)
+    assert.is_not_nil(float)
+    local cfg = vim.api.nvim_win_get_config(float)
+
+    assert.is_true(cfg.height < #rendered,
+      "the fixture must not fit on a 24-row screen, or this asserts nothing")
+    local function footer_text()
+      local parts = {}
+      for _, chunk in ipairs(vim.api.nvim_win_get_config(float).footer or {}) do
+        parts[#parts + 1] = type(chunk) == "string" and chunk or chunk[1]
+      end
+      return table.concat(parts)
+    end
+    assert.are.equal((" +%d more lines "):format(#rendered - cfg.height), footer_text(),
+      "the border must name exactly how many lines are hidden")
+
+    -- Focus and scroll to the end: nothing is hidden any more, so the count
+    -- must go, not sit there claiming lines the reader is looking at.
+    preview.show(buf, win)
+    vim.cmd("normal! G")
+    vim.api.nvim_exec_autocmds("WinScrolled", {})
+    assert.are.equal("", footer_text(), "a float scrolled to its end must not claim hidden lines")
+
+    preview.show(buf, win)
+    vim.api.nvim_feedkeys("q", "mx", false)
     overlay.forget(buf)
     vim.api.nvim_win_close(win, true)
     vim.api.nvim_buf_delete(buf, { force = true })

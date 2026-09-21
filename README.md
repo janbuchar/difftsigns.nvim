@@ -155,6 +155,10 @@ edit into several adjacent ones, so keying the preview to one hunk would show
 different content on different lines of one unbroken block of signs. The header
 discloses when hunks were merged, e.g. `add+change @@ -363,1 +363,6 @@ (2 hunks)`.
 
+The float takes the room actually free above or below the hunk line, whichever
+side has more. A hunk too tall for that has its remainder counted on the border
+(`+23 more lines`); the count follows the float's own scrolling once focused.
+
 Bind it *instead of* `gitsigns.preview_hunk`; where difftsigns has no structural
 verdict (inert buffer, unsupported language) it hands over to gitsigns' preview:
 
@@ -162,10 +166,14 @@ verdict (inert buffer, unsupported language) it hands over to gitsigns' preview:
 vim.keymap.set("n", "<leader>hp", require("difftsigns").preview)
 ```
 
-The float is transient: it closes on the next cursor move, on `<Esc>`, or on a
-second `preview()` call. A *jump* is the exception — `]c`, `[c`, a search or a
-`G` that lands on another hunk re-shows it there, so hunk navigation keeps the
-preview without any binding needing to know about it.
+The float is transient: it closes on the next cursor move or on `<Esc>`. A
+*jump* is the exception — `]c`, `[c`, a search or a `G` that lands on another
+hunk re-shows it there, so hunk navigation keeps the preview without any
+binding needing to know about it.
+
+Calling `preview()` again **focuses** the float (as gitsigns' `preview_hunk`
+focuses its popup), which is how you scroll a hunk too tall for the screen;
+`q` or `<Esc>` closes it from inside.
 
 ## Commands
 
