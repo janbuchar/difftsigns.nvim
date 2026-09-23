@@ -1,0 +1,35 @@
+name: on_main
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+# Shared with manual_publish.yml so the two never race on CHANGELOG.md. A queued run
+# replacing a pending one loses nothing: every run regenerates from full history.
+concurrency: changelog
+
+jobs:
+  changelog:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The tip, not the triggering commit: a queued run may start after
+          # main has moved on.
+          ref: main
+          fetch-depth: 0
+      - uses: orhun/git-cliff-action@v4
+        with:
+          args: --output CHANGELOG.md
+      # Pushes made with GITHUB_TOKEN trigger no workflows, whoever the commit
+      # author is, so this cannot loop.
+      - run: |
+          git add CHANGELOG.md
+          git diff --cached --quiet && exit 0
+          git config user.name "$GITHUB_ACTOR"
+          git config user.email "$GITHUB_ACTOR_ID+$GITHUB_ACTOR@users.noreply.github.com"
+          git commit -m "chore(changelog): update"
+          git push

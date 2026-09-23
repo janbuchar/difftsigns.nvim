@@ -21,7 +21,7 @@ jobs:
             difft: { version: 0.71.0, asset: difft-0.71.0-x86_64-unknown-linux-gnu.tar.gz }
     name: test (nvim ${{ matrix.nvim }}, difft ${{ matrix.difft.version }})
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: rhysd/action-setup-vim@v1
         with:
           neovim: true

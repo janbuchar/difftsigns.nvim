@@ -1,0 +1,41 @@
+name: manual_publish
+
+on:
+  # The version is derived from conventional commits since the last tag; see
+  # [bump] in cliff.toml.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency: changelog
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+      - id: cliff
+        uses: orhun/git-cliff-action@v4
+        with:
+          args: --bump --output CHANGELOG.md
+      - uses: orhun/git-cliff-action@v4
+        with:
+          args: --bump --unreleased --strip header --output ${{ runner.temp }}/notes.md
+      - env:
+          TAG: ${{ steps.cliff.outputs.version }}
+        run: |
+          # Nothing but skipped commits since the last release derives that same tag.
+          ! git rev-parse -q --verify "refs/tags/$TAG" || { echo "::error::$TAG already exists, nothing to release"; exit 1; }
+          git config user.name "$GITHUB_ACTOR"
+          git config user.email "$GITHUB_ACTOR_ID+$GITHUB_ACTOR@users.noreply.github.com"
+          git add CHANGELOG.md
+          git commit -m "chore(release): $TAG"
+          git tag -a "$TAG" -m "$TAG"
+          git push --atomic origin main "$TAG"
+          gh release create "$TAG" --title "$TAG" --notes-file "$RUNNER_TEMP/notes.md" --verify-tag
