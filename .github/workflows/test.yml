@@ -11,18 +11,21 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Keep in sync with difft_versions in lua/difftsigns/config.lua.
-        # 0.71 started putting the version in asset names.
-        difft:
-          - { version: 0.70.0, asset: difft-x86_64-unknown-linux-gnu.tar.gz }
-          - { version: 0.71.0, asset: difft-0.71.0-x86_64-unknown-linux-gnu.tar.gz }
-    name: test (difft ${{ matrix.difft.version }})
+        # Every difft in difft_versions (lua/difftsigns/config.lua) and the nvim
+        # floor from the README each need a job; pairing them beats a cross
+        # product. 0.71 started putting the version in asset names.
+        include:
+          - nvim: v0.11.0
+            difft: { version: 0.70.0, asset: difft-x86_64-unknown-linux-gnu.tar.gz }
+          - nvim: stable
+            difft: { version: 0.71.0, asset: difft-0.71.0-x86_64-unknown-linux-gnu.tar.gz }
+    name: test (nvim ${{ matrix.nvim }}, difft ${{ matrix.difft.version }})
     steps:
       - uses: actions/checkout@v4
       - uses: rhysd/action-setup-vim@v1
         with:
           neovim: true
-          version: stable
+          version: ${{ matrix.nvim }}
       - name: Install difftastic ${{ matrix.difft.version }}
         run: |
           curl -fsSL https://github.com/Wilfred/difftastic/releases/download/${{ matrix.difft.version }}/${{ matrix.difft.asset }} | tar xz
