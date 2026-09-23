@@ -11,7 +11,7 @@ need to not break it.
 make test
 ```
 
-Headless plenary. Needs `difft` (pinned `0.70.0`, see `config.lua`) and gitsigns
+Headless plenary. Needs `difft` (a version from `difft_versions` in `config.lua`, CI runs each) and gitsigns
 on the runtimepath (`tests/minimal_init.lua`). Fixtures under `tests/fixtures/`
 are captured real difft output — never hand-edit them; recapture.
 

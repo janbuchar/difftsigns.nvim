@@ -20,7 +20,7 @@ RUN curl -fsSL https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.x86_
     && curl -fsSL https://github.com/charmbracelet/vhs/releases/download/v0.11.0/vhs_0.11.0_Linux_x86_64.tar.gz \
     | tar xz -C /usr/local/bin --strip-components=1 --wildcards '*/vhs'
 
-RUN curl -fsSL https://github.com/Wilfred/difftastic/releases/download/0.70.0/difft-x86_64-unknown-linux-gnu.tar.gz \
+RUN curl -fsSL https://github.com/Wilfred/difftastic/releases/download/0.71.0/difft-0.71.0-x86_64-unknown-linux-gnu.tar.gz \
     | tar xz -C /usr/local/bin difft
 
 RUN git clone --depth 1 https://github.com/lewis6991/gitsigns.nvim /opt/gitsigns.nvim \

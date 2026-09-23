@@ -4,7 +4,7 @@
 --- Produces no geometry (that is gitsigns' job), only the sets of lines that
 --- genuinely changed plus the token ranges behind them for the preview.
 ---
---- Verified against Difftastic 0.70.0. Schema quirks:
+--- Verified against every version in `config.defaults.difft_versions`. Schema quirks:
 ---   * Line numbers are 0-BASED. Normalised to 1-based here, once.
 ---   * `unchanged` / `created` / `deleted` omit `chunks` entirely.
 ---   * A chunk entry is `{ lhs?: Side, rhs?: Side }`; either side may be absent.

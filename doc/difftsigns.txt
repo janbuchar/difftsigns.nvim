@@ -45,10 +45,9 @@ the language, you get plain gitsigns. See |difftsigns-troubleshooting|.
 - Neovim 0.11 or newer.
 - gitsigns.nvim (https://github.com/lewis6991/gitsigns.nvim). Required, not
   optional: difftsigns has no diff of its own. See |difftsigns-how-it-works|.
-- difftastic `0.70.0` on `$PATH` as `difft`, or wherever
-  |difftsigns-difft_cmd| points. Other versions load with a warning;
-  difftastic's JSON output is explicitly unstable, so only the pinned version
-  is validated.
+- difftastic on `$PATH` as `difft`, or wherever |difftsigns-difft_cmd|
+  points. 0.70 and 0.71 are validated; other versions load with a warning,
+  since difftastic's JSON output is explicitly unstable.
 
 ==============================================================================
 3. SETUP                                                    *difftsigns-setup*
@@ -84,7 +83,7 @@ Defaults, all keys optional. Unknown keys and wrong types are rejected at
       noise_text             = nil,
       priority_offset        = 1,
       language_overrides     = {},
-      difft_version_expected = "0.70.0",
+      difft_versions         = { "0.70.0", "0.71.0" },
       on_attach              = nil,
     })
 <
@@ -148,11 +147,11 @@ language_overrides ~
     `table<string, string>`. Glob to difftastic language name, passed as
     `--override`. Example: `{ ["*.foo"] = "javascript" }`.
 
-                                          *difftsigns-difft_version_expected*
-difft_version_expected ~
-    `string`. Version of difftastic the plugin was validated against. A
-    different `difft --version` produces a warning at `setup()` and in
-    |:checkhealth|; the plugin still runs.
+                                                  *difftsigns-difft_versions*
+difft_versions ~
+    `string[]`. Versions of difftastic the plugin was validated against. Any
+    other `difft --version` produces a warning at `setup()` and in
+    |:checkhealth|; the plugin still runs. `{}` disables the check.
 
                                                        *difftsigns-on_attach*
 on_attach ~
@@ -309,7 +308,7 @@ noise, it places its own sign in the same cell at a higher extmark priority
 (|difftsigns-priority_offset|) with gitsigns' glyph and a dim highlight.
 Results are dropped if the buffer changed while difftastic was running.
 
-What it catches, verified against difftastic 0.70.0:
+What it catches, verified against difftastic 0.70 and 0.71:
 
     Reindent / reformat                           fully dimmed
     Prettier-style rewrap (incl. trailing comma)  fully dimmed
@@ -324,7 +323,7 @@ What it catches, verified against difftastic 0.70.0:
 ==============================================================================
 10. LIMITATIONS                                       *difftsigns-limitations*
 
-Moved code is not detected. difftastic 0.70 has no move detection: a
+Moved code is not detected. difftastic has no move detection: a
 reordered function is reported as a deletion plus an addition with every
 token changed, so difftsigns leaves it fully lit. That is the safe direction
 to fail, but a reorder looks exactly as noisy as it does today.
@@ -356,7 +355,7 @@ every cause is reported: >
     :DifftSigns status
 <
 |:checkhealth| verifies the difftastic binary, its version against
-|difftsigns-difft_version_expected|, that `--display json` works, that the
+|difftsigns-difft_versions|, that `--display json` works, that the
 gitsigns internals it reads are present, and the state of the current buffer.
 `status` reports either the noise/real split or the specific reason the
 buffer has no overlay (not attached, file too large, unsupported language,

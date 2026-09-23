@@ -12,8 +12,8 @@ local AUGROUP = "DifftSigns"
 --- difftastic's JSON schema is explicitly unstable, so an unvalidated version
 --- gets a loud warning rather than a silent mis-parse.
 local function check_version()
-  local expected = config.values.difft_version_expected
-  if expected == nil or expected == "" then
+  local versions = config.values.difft_versions
+  if #versions == 0 then
     return
   end
   local cmd = config.values.difft_cmd
@@ -28,11 +28,11 @@ local function check_version()
         return
       end
       local ver = res.stdout:match("Difftastic%s+([%d%.]+)")
-      if ver ~= nil and ver ~= expected then
+      if ver ~= nil and not vim.list_contains(versions, ver) then
         vim.notify(
-          ("difftsigns: difftastic %s found, %s validated. The JSON schema is unstable; "
-            .. "verify the overlay looks right, then set difft_version_expected = '%s'.")
-            :format(ver, expected, ver),
+          ("difftsigns: difftastic %s found, validated: %s. The JSON schema is unstable; "
+            .. "verify the overlay looks right, then add '%s' to difft_versions.")
+            :format(ver, table.concat(versions, ", "), ver),
           vim.log.levels.WARN
         )
       end

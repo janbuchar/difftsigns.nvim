@@ -12,7 +12,7 @@ local M = {}
 --- @field noise_text             string|nil -- glyph override; nil = mirror gitsigns'
 --- @field priority_offset        integer  -- added to gitsigns' sign_priority
 --- @field language_overrides     table<string,string>  -- glob:lang for difft --override
---- @field difft_version_expected string   -- pin; warn on mismatch
+--- @field difft_versions         string[] -- validated versions; warn on others
 --- @field on_attach              fun(bufnr: integer)|nil
 
 --- @type DifftSigns.Config
@@ -51,7 +51,8 @@ M.defaults = {
 
   language_overrides = {},
 
-  difft_version_expected = "0.70.0",
+  -- Every version here runs the full suite in CI.
+  difft_versions = { "0.70.0", "0.71.0" },
 
   on_attach = nil,
 }
@@ -72,7 +73,12 @@ local function validate(cfg)
     vim.validate("noise_text", cfg.noise_text, "string", true)
     vim.validate("priority_offset", cfg.priority_offset, "number")
     vim.validate("language_overrides", cfg.language_overrides, "table")
-    vim.validate("difft_version_expected", cfg.difft_version_expected, "string")
+    vim.validate("difft_versions", cfg.difft_versions, "table")
+    for _, v in ipairs(cfg.difft_versions) do
+      if type(v) ~= "string" then
+        error("difft_versions must be a list of version strings")
+      end
+    end
     vim.validate("on_attach", cfg.on_attach, "function", true)
 
     if cfg.debounce_ms < 0 then

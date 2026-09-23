@@ -25,7 +25,7 @@ annotates the buffer you are already editing, and only through gitsigns.
 - Neovim 0.11+
 - [gitsigns.nvim](https://github.com/lewis6991/gitsigns.nvim), required, not
   optional (see [How it works](#how-it-works))
-- [difftastic](https://github.com/Wilfred/difftastic) `0.70.0` on `PATH`
+- [difftastic](https://github.com/Wilfred/difftastic) 0.70 or 0.71 on `PATH`
 
 ## Install
 
@@ -55,7 +55,7 @@ require("difftsigns").setup({
   priority_offset = 1,            -- added to gitsigns' sign_priority to win the cell
   graph_limit    = nil,           -- difft --graph-limit; nil = difft's default (3,000,000)
   language_overrides = {},        -- { ["*.foo"] = "javascript" }
-  difft_version_expected = "0.70.0",
+  difft_versions = { "0.70.0", "0.71.0" },  -- validated; others warn, {} = no check
   on_attach = function(bufnr) end,
 })
 ```
@@ -198,7 +198,7 @@ Two rules govern the whole plugin:
 
 ## What it catches, and what it doesn't
 
-Verified against difftastic 0.70.0:
+Verified against difftastic 0.70 and 0.71:
 
 | Change | Result |
 |---|---|
@@ -210,7 +210,7 @@ Verified against difftastic 0.70.0:
 | Removed blank lines | dimmed |
 | Reindent + argument removed from a call | line stays lit, removed token marked |
 | Reindent + value changed | line stays lit, changed token marked |
-| Moved / reordered code | stays lit, difftastic 0.70 has no move detection |
+| Moved / reordered code | stays lit, difftastic has no move detection |
 
 ### Other limitations
 

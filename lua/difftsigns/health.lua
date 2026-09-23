@@ -24,16 +24,16 @@ local function check_difft()
 
   local res = vim.system({ cmd, "--version" }, { text = true }):wait()
   local ver = res.stdout and res.stdout:match("Difftastic%s+([%d%.]+)")
-  local expected = config.values.difft_version_expected
+  local versions = config.values.difft_versions
 
   if ver == nil then
     warn("could not parse a version from `difft --version`")
-  elseif ver == expected then
-    ok(("version %s matches the validated pin"):format(ver))
+  elseif vim.list_contains(versions, ver) then
+    ok(("version %s is validated"):format(ver))
   else
-    warn(("version %s found, %s validated"):format(ver, expected), {
+    warn(("version %s found, validated: %s"):format(ver, table.concat(versions, ", ")), {
       "difftastic's JSON output is explicitly unstable.",
-      "Verify the overlay looks correct, then set difft_version_expected = '" .. ver .. "'.",
+      "Verify the overlay looks correct, then add '" .. ver .. "' to difft_versions.",
     })
   end
 
@@ -47,7 +47,7 @@ local function check_difft()
     error_("`difft --display json` failed", { "stderr: " .. tostring(probe.stderr) })
   end
 
-  info("difftastic 0.70 has no move detection: a reordered block reads as a real change.")
+  info("difftastic has no move detection: a reordered block reads as a real change.")
 end
 
 local function check_gitsigns()

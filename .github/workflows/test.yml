@@ -8,15 +8,24 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Keep in sync with difft_versions in lua/difftsigns/config.lua.
+        # 0.71 started putting the version in asset names.
+        difft:
+          - { version: 0.70.0, asset: difft-x86_64-unknown-linux-gnu.tar.gz }
+          - { version: 0.71.0, asset: difft-0.71.0-x86_64-unknown-linux-gnu.tar.gz }
+    name: test (difft ${{ matrix.difft.version }})
     steps:
       - uses: actions/checkout@v4
       - uses: rhysd/action-setup-vim@v1
         with:
           neovim: true
           version: stable
-      - name: Install difftastic 0.70.0
+      - name: Install difftastic ${{ matrix.difft.version }}
         run: |
-          curl -fsSL https://github.com/Wilfred/difftastic/releases/download/0.70.0/difft-x86_64-unknown-linux-gnu.tar.gz | tar xz
+          curl -fsSL https://github.com/Wilfred/difftastic/releases/download/${{ matrix.difft.version }}/${{ matrix.difft.asset }} | tar xz
           sudo mv difft /usr/local/bin/
       - name: Install plenary and gitsigns
         run: |
